@@ -5,11 +5,11 @@ module CouchDB
     # Carries transfer statistics for one replication run. Check `ok` first; if it is
     # `false`, `error` contains the failure message.
     #
-    # ```crystal
+    # ```
     # session = local.replicate_to(remote)
-    # puts session.ok            # true / false
-    # puts session.docs_written  # number of documents transferred
-    # puts session.last_seq      # last sequence number processed
+    # puts session.ok?          # true / false
+    # puts session.docs_written # number of documents transferred
+    # puts session.last_seq     # last sequence number processed
     # ```
     class Session
       # Name or URL of the replication source.
@@ -25,7 +25,7 @@ module CouchDB
       # Last sequence number processed by this replication run.
       getter last_seq : String
       # `true` when replication completed without error, `false` otherwise.
-      getter ok : Bool
+      getter? ok : Bool
       # Error message when `ok` is `false`; `nil` on success.
       getter error : String?
 
@@ -62,7 +62,7 @@ module CouchDB
 
       # Returns a human-readable summary of the replication session.
       def to_s(io : IO)
-        io << "Replication(#{source_url} → #{target_url}, ok=#{ok}, "
+        io << "Replication(#{source_url} → #{target_url}, ok=#{ok?}, "
         io << "docs_read=#{docs_read}, docs_written=#{docs_written}, "
         io << "last_seq=#{last_seq})"
       end

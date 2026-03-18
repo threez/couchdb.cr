@@ -25,7 +25,7 @@ describe CouchDB::Replication::Replicator do
     source.put(make_doc("doc2", msg: "world"))
 
     session = CouchDB::Replication::Replicator.new(source, target).replicate
-    session.ok.should be_true
+    session.ok?.should be_true
     session.docs_written.should eq(2)
 
     target.get("doc1")["msg"].as_s.should eq("hello")
@@ -40,7 +40,7 @@ describe CouchDB::Replication::Replicator do
     CouchDB::Replication::Replicator.new(source, target).replicate
 
     session2 = CouchDB::Replication::Replicator.new(source, target).replicate
-    session2.ok.should be_true
+    session2.ok?.should be_true
     session2.docs_written.should eq(0)
   end
 

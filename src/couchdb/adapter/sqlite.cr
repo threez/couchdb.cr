@@ -65,12 +65,7 @@ module CouchDB
       def initialize(path : String)
         # max_pool_size=1 ensures :memory: databases stay on a single connection
         # and also avoids SQLite write-lock contention
-        url = if path == ":memory:"
-          "sqlite3::memory:?max_pool_size=1"
-        else
-          "sqlite3:#{path}?max_pool_size=1"
-        end
-        @db = DB.open(url)
+        @db = DB.open("sqlite3:#{path}?max_pool_size=1")
         # Use path as db_name for stable checkpoint IDs; random suffix for :memory:
         @db_name = path == ":memory:" ? "sqlite_#{Random::Secure.hex(8)}" : path
         migrate!
@@ -152,41 +147,10 @@ module CouchDB
           docs.each do |doc|
             id = doc.id
             raise BadRequest.new("Missing _id") if id.empty?
-            deleted = doc.deleted?
-
             if new_edits
-              existing_rev = begin
-                winning_rev_for(id)
-              rescue NotFound
-                nil
-              end
-              provided_rev = doc.rev
-              if existing_rev
-                if provided_rev != existing_rev
-                  results << {id: id, rev: provided_rev || "", ok: false}
-                  next
-                end
-              else
-                if provided_rev && !provided_rev.empty?
-                  results << {id: id, rev: provided_rev, ok: false}
-                  next
-                end
-              end
-              new_rev = doc.next_rev
-              store_doc(id, new_rev, doc, deleted: deleted, parent_rev: existing_rev)
-              results << {id: id, rev: new_rev, ok: true}
+              results << bulk_docs_new_edit(doc, id)
             else
-              # new_edits: false — replication path, store revision exactly as given
-              rev = doc.rev || raise BadRequest.new("Missing _rev for new_edits=false")
-              parent_rev = doc.json_unmapped["_revisions"]?.try(&.as_h?).try { |r|
-                ids = r["ids"]?.try(&.as_a?)
-                start = r["start"]?.try(&.as_i?)
-                if ids && start && ids.size > 1
-                  "#{start - 1}-#{ids[1].as_s}"
-                end
-              }
-              store_doc(id, rev, doc, deleted: deleted, parent_rev: parent_rev)
-              results << {id: id, rev: rev, ok: true}
+              results << bulk_docs_replication(doc, id)
             end
           end
           @db.exec("COMMIT")
@@ -202,8 +166,7 @@ module CouchDB
       def all_docs(include_docs : Bool = false, limit : Int32? = nil, skip : Int32 = 0) : NamedTuple(
         total_rows: Int64,
         offset: Int32,
-        rows: Array(JSON::Any)
-      )
+        rows: Array(JSON::Any))
         total = @db.scalar(
           "SELECT COUNT(DISTINCT id) FROM docs WHERE deleted = 0"
         ).as(Int64)
@@ -222,11 +185,11 @@ module CouchDB
         limit_val = limit || -1
         rows = [] of JSON::Any
 
-        @db.query(sql, limit_val, skip) do |rs|
-          rs.each do
-            doc_id = rs.read(String)
-            rev = rs.read(String)
-            body = rs.read(String)
+        @db.query(sql, limit_val, skip) do |result_set|
+          result_set.each do
+            doc_id = result_set.read(String)
+            rev = result_set.read(String)
+            body = result_set.read(String)
 
             row_data = {
               "id"    => JSON::Any.new(doc_id),
@@ -246,8 +209,7 @@ module CouchDB
       # SQLite implementation of `Adapter#changes`. See `Adapter#changes` for the contract.
       def changes(since : String = "0", limit : Int32? = nil, include_docs : Bool = false) : NamedTuple(
         last_seq: String,
-        results: Array(JSON::Any)
-      )
+        results: Array(JSON::Any))
         since_seq = since.to_i64? || 0_i64
         limit_val = limit || -1
 
@@ -263,13 +225,13 @@ module CouchDB
         results = [] of JSON::Any
         last_seq = since_seq
 
-        @db.query(sql, since_seq, limit_val) do |rs|
-          rs.each do
-            seq = rs.read(Int64)
-            doc_id = rs.read(String)
-            doc_rev = rs.read(String)
-            deleted = rs.read(Int64) == 1
-            body = rs.read(String)
+        @db.query(sql, since_seq, limit_val) do |result_set|
+          result_set.each do
+            seq = result_set.read(Int64)
+            doc_id = result_set.read(String)
+            doc_rev = result_set.read(String)
+            deleted = result_set.read(Int64) == 1
+            body = result_set.read(String)
 
             last_seq = seq
 
@@ -351,6 +313,38 @@ module CouchDB
         )
 
         {ok: true, id: full_id, rev: new_rev}
+      end
+
+      private def bulk_docs_new_edit(doc : Document, id : String) : NamedTuple(id: String, rev: String, ok: Bool)
+        deleted = doc.deleted?
+        existing_rev = begin
+          winning_rev_for(id)
+        rescue NotFound
+          nil
+        end
+        provided_rev = doc.rev
+        if existing_rev
+          return {id: id, rev: provided_rev || "", ok: false} if provided_rev != existing_rev
+        else
+          return {id: id, rev: provided_rev, ok: false} if provided_rev && !provided_rev.empty?
+        end
+        new_rev = doc.next_rev
+        store_doc(id, new_rev, doc, deleted: deleted, parent_rev: existing_rev)
+        {id: id, rev: new_rev, ok: true}
+      end
+
+      private def bulk_docs_replication(doc : Document, id : String) : NamedTuple(id: String, rev: String, ok: Bool)
+        deleted = doc.deleted?
+        rev = doc.rev || raise BadRequest.new("Missing _rev for new_edits=false")
+        parent_rev = doc.json_unmapped["_revisions"]?.try(&.as_h?).try { |rev_map|
+          ids = rev_map["ids"]?.try(&.as_a?)
+          start = rev_map["start"]?.try(&.as_i?)
+          if ids && start && ids.size > 1
+            "#{start - 1}-#{ids[1].as_s}"
+          end
+        }
+        store_doc(id, rev, doc, deleted: deleted, parent_rev: parent_rev)
+        {id: id, rev: rev, ok: true}
       end
 
       private def migrate!

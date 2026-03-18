@@ -52,8 +52,8 @@ module CouchDB
           id_revs = {} of String => Array(String)
           results.each do |change|
             id = change["id"]?.try(&.as_s?) || next
-            revs = change["changes"]?.try(&.as_a?).try(&.map { |c|
-              c["rev"]?.try(&.as_s?) || ""
+            revs = change["changes"]?.try(&.as_a?).try(&.map { |entry|
+              entry["rev"]?.try(&.as_s?) || ""
             }.reject(&.empty?)) || [] of String
             id_revs[id] = revs
           end
@@ -76,8 +76,8 @@ module CouchDB
 
             unless fetched.empty?
               write_results = @target.bulk_docs(fetched, new_edits: false)
-              write_results.each do |r|
-                if r[:ok]
+              write_results.each do |write_result|
+                if write_result[:ok]
                   docs_written += 1
                 else
                   failures += 1

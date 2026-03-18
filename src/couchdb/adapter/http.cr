@@ -27,9 +27,9 @@ module CouchDB
         @db_path = uri.path.to_s.chomp("/")
         @db_name = @db_path.split("/").last
         @auth = if uri.user
-          credentials = "#{uri.user}:#{uri.password}"
-          "Basic #{Base64.strict_encode(credentials)}"
-        end
+                  credentials = "#{uri.user}:#{uri.password}"
+                  "Basic #{Base64.strict_encode(credentials)}"
+                end
       end
 
       # HTTP implementation of `Adapter#info`. See `Adapter#info` for the contract.
@@ -74,16 +74,16 @@ module CouchDB
       # HTTP implementation of `Adapter#bulk_docs`. See `Adapter#bulk_docs` for the contract.
       def bulk_docs(docs : Array(Document), new_edits : Bool = true) : Array(NamedTuple(id: String, rev: String, ok: Bool))
         # Build payload explicitly to avoid mixed-type Hash serialization issues
-        payload = String.build do |s|
-          s << %({"docs":)
-          s << "["
+        payload = String.build do |io|
+          io << %({"docs":)
+          io << "["
           docs.each_with_index do |doc, i|
-            s << "," if i > 0
-            doc.to_json(s)
+            io << "," if i > 0
+            doc.to_json(io)
           end
-          s << %(],"new_edits":)
-          new_edits.to_json(s)
-          s << "}"
+          io << %(],"new_edits":)
+          new_edits.to_json(io)
+          io << "}"
         end
         resp = post_request("#{@db_path}/_bulk_docs", payload)
         check_response!(resp)
@@ -100,8 +100,7 @@ module CouchDB
       def all_docs(include_docs : Bool = false, limit : Int32? = nil, skip : Int32 = 0) : NamedTuple(
         total_rows: Int64,
         offset: Int32,
-        rows: Array(JSON::Any)
-      )
+        rows: Array(JSON::Any))
         params = "include_docs=#{include_docs}&skip=#{skip}"
         params += "&limit=#{limit}" if limit
         resp = get_request("#{@db_path}/_all_docs?#{params}")
@@ -116,8 +115,7 @@ module CouchDB
       # HTTP implementation of `Adapter#changes`. See `Adapter#changes` for the contract.
       def changes(since : String = "0", limit : Int32? = nil, include_docs : Bool = false) : NamedTuple(
         last_seq: String,
-        results: Array(JSON::Any)
-      )
+        results: Array(JSON::Any))
         params = "since=#{since}&include_docs=#{include_docs}"
         params += "&limit=#{limit}" if limit
         resp = get_request("#{@db_path}/_changes?#{params}")
@@ -145,7 +143,7 @@ module CouchDB
 
       # HTTP implementation of `Adapter#bulk_get`. See `Adapter#bulk_get` for the contract.
       def bulk_get(id_revs : Array(NamedTuple(id: String, rev: String))) : Array(Document)
-        docs_param = id_revs.map { |p| {"id" => p[:id], "rev" => p[:rev]} }
+        docs_param = id_revs.map { |pair| {"id" => pair[:id], "rev" => pair[:rev]} }
         payload = {"docs" => docs_param}.to_json
         resp = post_request("#{@db_path}/_bulk_get", payload)
         check_response!(resp)

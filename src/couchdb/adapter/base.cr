@@ -40,8 +40,7 @@ module CouchDB
     abstract def all_docs(include_docs : Bool, limit : Int32?, skip : Int32) : NamedTuple(
       total_rows: Int64,
       offset: Int32,
-      rows: Array(JSON::Any)
-    )
+      rows: Array(JSON::Any))
 
     # Returns the changes feed since a given sequence number.
     #
@@ -49,8 +48,7 @@ module CouchDB
     # Pass `include_docs: true` to embed full document bodies in each change entry.
     abstract def changes(since : String, limit : Int32?, include_docs : Bool) : NamedTuple(
       last_seq: String,
-      results: Array(JSON::Any)
-    )
+      results: Array(JSON::Any))
 
     # Given a map of `id → [revs]`, returns only the revisions missing from this adapter.
     #

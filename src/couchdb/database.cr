@@ -10,10 +10,10 @@ module CouchDB
   # delegates all operations to it. It implements the `Adapter` interface so it
   # can be passed anywhere an adapter is accepted.
   #
-  # ```crystal
-  # db = CouchDB::Database.new("notes.db")          # local SQLite
-  # db = CouchDB::Database.new(":memory:")           # in-memory SQLite (testing)
-  # db = CouchDB::Database.new("http://admin:pw@localhost:5984/mydb")  # remote CouchDB
+  # ```
+  # db = CouchDB::Database.new("notes.db")                            # local SQLite
+  # db = CouchDB::Database.new(":memory:")                            # in-memory SQLite (testing)
+  # db = CouchDB::Database.new("http://admin:pw@localhost:5984/mydb") # remote CouchDB
   # ```
   class Database
     include Adapter
@@ -27,11 +27,11 @@ module CouchDB
     # - any other string → `Adapter::SQLite` file database (`.db` appended if needed)
     def initialize(location : String)
       @adapter = if location.starts_with?("http://") || location.starts_with?("https://")
-        Adapter::HTTP.new(location)
-      else
-        path = (location == ":memory:" || location.ends_with?(".db")) ? location : "#{location}.db"
-        Adapter::SQLite.new(path)
-      end
+                   Adapter::HTTP.new(location)
+                 else
+                   path = (location == ":memory:" || location.ends_with?(".db")) ? location : "#{location}.db"
+                   Adapter::SQLite.new(path)
+                 end
     end
 
     # Returns `{db_name:, doc_count:, update_seq:}` for the underlying database.
@@ -47,9 +47,9 @@ module CouchDB
     # Typed overload — deserializes the stored document into a specific `Document` subclass.
     #
     # Example:
-    # ```crystal
+    # ```
     # note = db.get("note-1", as: MyNote)
-    # note.title  # strongly-typed field
+    # note.title # strongly-typed field
     # ```
     def get(id : String, as klass : T.class) : T forall T
       klass.from_json(@adapter.get(id).to_json)
@@ -77,8 +77,7 @@ module CouchDB
     def all_docs(include_docs : Bool = false, limit : Int32? = nil, skip : Int32 = 0) : NamedTuple(
       total_rows: Int64,
       offset: Int32,
-      rows: Array(JSON::Any)
-    )
+      rows: Array(JSON::Any))
       @adapter.all_docs(include_docs, limit, skip)
     end
 
@@ -86,8 +85,7 @@ module CouchDB
     # Pass `include_docs: true` to embed full document bodies in each change entry.
     def changes(since : String = "0", limit : Int32? = nil, include_docs : Bool = false) : NamedTuple(
       last_seq: String,
-      results: Array(JSON::Any)
-    )
+      results: Array(JSON::Any))
       @adapter.changes(since, limit, include_docs)
     end
 

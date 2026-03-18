@@ -147,7 +147,7 @@ local.replicate_to(remote)      # push only
 
 ```crystal
 session = local.replicate_to(remote)
-puts session.ok              # true / false
+puts session.ok?             # true / false
 puts session.docs_written    # number of documents transferred
 puts session.docs_read       # number of documents fetched from source
 puts session.last_seq        # last sequence number processed

@@ -8,10 +8,10 @@ module CouchDB
   # `JSON::Serializable::Unmapped` to preserve any extra fields in `json_unmapped`.
   # Subclass it to add strongly-typed application fields:
   #
-  # ```crystal
+  # ```
   # class Note < CouchDB::Document
   #   property title : String = ""
-  #   property body  : String = ""
+  #   property body : String = ""
   # end
   # ```
   #
