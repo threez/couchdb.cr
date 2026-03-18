@@ -125,11 +125,13 @@ db.bulk_docs(docs, new_edits: false)  # replication write path
 ### Query
 
 ```crystal
-db.all_docs                                   # all non-deleted docs
+db.all_docs                                            # all non-deleted docs
 db.all_docs(include_docs: true, limit: 50, skip: 0)
-db.changes(since: "0")                        # changes feed
+db.all_docs(startkey: "a", endkey: "m")               # range [a, m] inclusive
+db.all_docs(startkey: "note-", endkey: "note-\uffff") # prefix scan
+db.changes(since: "0")                                 # changes feed
 db.changes(since: seq, limit: 100, include_docs: true)
-db.info                                       # => {db_name:, doc_count:, update_seq:}
+db.info                                                # => {db_name:, doc_count:, update_seq:}
 ```
 
 ### Replication
@@ -211,7 +213,6 @@ The "winning" revision is the one with the highest `seq` for a given `id`. Delet
 
 ## Out of Scope (v0.1)
 
-- `_all_docs` range queries (`startkey`/`endkey`)
 - Continuous / longpoll changes feed
 - Conflict resolution hooks
 - Design documents and map-reduce views

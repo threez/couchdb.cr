@@ -163,43 +163,73 @@ module CouchDB
       end
 
       # SQLite implementation of `Adapter#all_docs`. See `Adapter#all_docs` for the contract.
-      def all_docs(include_docs : Bool = false, limit : Int32? = nil, skip : Int32 = 0) : NamedTuple(
+      def all_docs(include_docs : Bool = false, limit : Int32? = nil, skip : Int32 = 0,
+                   startkey : String? = nil, endkey : String? = nil) : NamedTuple(
         total_rows: Int64,
         offset: Int32,
         rows: Array(JSON::Any))
+        # total_rows is always the unfiltered count — matches CouchDB behaviour
         total = @db.scalar(
           "SELECT COUNT(DISTINCT id) FROM docs WHERE deleted = 0"
         ).as(Int64)
 
-        # Get winning revs for all non-deleted docs
-        sql = <<-SQL
-          SELECT d.id, d.rev, d.body
-          FROM docs d
-          INNER JOIN (
-            SELECT id, MAX(seq) AS max_seq FROM docs WHERE deleted = 0 GROUP BY id
-          ) w ON d.id = w.id AND d.seq = w.max_seq
-          ORDER BY d.id
-          LIMIT ? OFFSET ?
-        SQL
-
         limit_val = limit || -1
         rows = [] of JSON::Any
 
-        @db.query(sql, limit_val, skip) do |result_set|
-          result_set.each do
-            doc_id = result_set.read(String)
-            rev = result_set.read(String)
-            body = result_set.read(String)
-
-            row_data = {
-              "id"    => JSON::Any.new(doc_id),
-              "key"   => JSON::Any.new(doc_id),
-              "value" => JSON::Any.new({"rev" => JSON::Any.new(rev)} of String => JSON::Any),
-            } of String => JSON::Any
-
-            row_data["doc"] = JSON.parse(body) if include_docs
-
-            rows << JSON::Any.new(row_data)
+        if startkey.nil? && endkey.nil?
+          sql = <<-SQL
+            SELECT d.id, d.rev, d.body
+            FROM docs d
+            INNER JOIN (
+              SELECT id, MAX(seq) AS max_seq FROM docs WHERE deleted = 0 GROUP BY id
+            ) w ON d.id = w.id AND d.seq = w.max_seq
+            ORDER BY d.id
+            LIMIT ? OFFSET ?
+          SQL
+          @db.query(sql, limit_val, skip) do |result_set|
+            build_all_docs_rows(result_set, rows, include_docs)
+          end
+        elsif startkey && endkey
+          sql = <<-SQL
+            SELECT d.id, d.rev, d.body
+            FROM docs d
+            INNER JOIN (
+              SELECT id, MAX(seq) AS max_seq FROM docs WHERE deleted = 0 GROUP BY id
+            ) w ON d.id = w.id AND d.seq = w.max_seq
+            WHERE d.id >= ? AND d.id <= ?
+            ORDER BY d.id
+            LIMIT ? OFFSET ?
+          SQL
+          @db.query(sql, startkey, endkey, limit_val, skip) do |result_set|
+            build_all_docs_rows(result_set, rows, include_docs)
+          end
+        elsif startkey
+          sql = <<-SQL
+            SELECT d.id, d.rev, d.body
+            FROM docs d
+            INNER JOIN (
+              SELECT id, MAX(seq) AS max_seq FROM docs WHERE deleted = 0 GROUP BY id
+            ) w ON d.id = w.id AND d.seq = w.max_seq
+            WHERE d.id >= ?
+            ORDER BY d.id
+            LIMIT ? OFFSET ?
+          SQL
+          @db.query(sql, startkey, limit_val, skip) do |result_set|
+            build_all_docs_rows(result_set, rows, include_docs)
+          end
+        else
+          sql = <<-SQL
+            SELECT d.id, d.rev, d.body
+            FROM docs d
+            INNER JOIN (
+              SELECT id, MAX(seq) AS max_seq FROM docs WHERE deleted = 0 GROUP BY id
+            ) w ON d.id = w.id AND d.seq = w.max_seq
+            WHERE d.id <= ?
+            ORDER BY d.id
+            LIMIT ? OFFSET ?
+          SQL
+          @db.query(sql, endkey, limit_val, skip) do |result_set|
+            build_all_docs_rows(result_set, rows, include_docs)
           end
         end
 
@@ -313,6 +343,24 @@ module CouchDB
         )
 
         {ok: true, id: full_id, rev: new_rev}
+      end
+
+      private def build_all_docs_rows(result_set : DB::ResultSet, rows : Array(JSON::Any), include_docs : Bool)
+        result_set.each do
+          doc_id = result_set.read(String)
+          rev = result_set.read(String)
+          body = result_set.read(String)
+
+          row_data = {
+            "id"    => JSON::Any.new(doc_id),
+            "key"   => JSON::Any.new(doc_id),
+            "value" => JSON::Any.new({"rev" => JSON::Any.new(rev)} of String => JSON::Any),
+          } of String => JSON::Any
+
+          row_data["doc"] = JSON.parse(body) if include_docs
+
+          rows << JSON::Any.new(row_data)
+        end
       end
 
       private def bulk_docs_new_edit(doc : Document, id : String) : NamedTuple(id: String, rev: String, ok: Bool)

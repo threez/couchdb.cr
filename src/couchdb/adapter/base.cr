@@ -37,7 +37,9 @@ module CouchDB
     #
     # Pass `include_docs: true` to embed full document bodies in each row's `"doc"` field.
     # Use `limit` and `skip` for pagination.
-    abstract def all_docs(include_docs : Bool, limit : Int32?, skip : Int32) : NamedTuple(
+    # Use `startkey` and `endkey` for range queries (both bounds are inclusive).
+    abstract def all_docs(include_docs : Bool, limit : Int32?, skip : Int32,
+                          startkey : String?, endkey : String?) : NamedTuple(
       total_rows: Int64,
       offset: Int32,
       rows: Array(JSON::Any))

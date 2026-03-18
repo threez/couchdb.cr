@@ -97,12 +97,16 @@ module CouchDB
       end
 
       # HTTP implementation of `Adapter#all_docs`. See `Adapter#all_docs` for the contract.
-      def all_docs(include_docs : Bool = false, limit : Int32? = nil, skip : Int32 = 0) : NamedTuple(
+      def all_docs(include_docs : Bool = false, limit : Int32? = nil, skip : Int32 = 0,
+                   startkey : String? = nil, endkey : String? = nil) : NamedTuple(
         total_rows: Int64,
         offset: Int32,
         rows: Array(JSON::Any))
         params = "include_docs=#{include_docs}&skip=#{skip}"
         params += "&limit=#{limit}" if limit
+        # CouchDB requires keys to be JSON-encoded strings in the URL
+        params += "&startkey=#{URI.encode_path("\"#{startkey}\"")}" if startkey
+        params += "&endkey=#{URI.encode_path("\"#{endkey}\"")}" if endkey
         resp = get_request("#{@db_path}/_all_docs?#{params}")
         check_response!(resp)
         data = JSON.parse(resp.body)

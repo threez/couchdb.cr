@@ -116,6 +116,35 @@ describe CouchDB::Adapter::SQLite do
       result = db.all_docs(include_docs: true)
       result[:rows].first["doc"]["val"].as_s.should eq("1")
     end
+
+    it "filters by startkey" do
+      db = tmp_db
+      %w[apple banana cherry].each { |id| db.put(make_doc(id)) }
+      ids = db.all_docs(startkey: "banana")[:rows].map(&.["id"].as_s)
+      ids.should eq(%w[banana cherry])
+    end
+
+    it "filters by endkey" do
+      db = tmp_db
+      %w[apple banana cherry].each { |id| db.put(make_doc(id)) }
+      ids = db.all_docs(endkey: "banana")[:rows].map(&.["id"].as_s)
+      ids.should eq(%w[apple banana])
+    end
+
+    it "filters by startkey and endkey" do
+      db = tmp_db
+      %w[apple banana cherry date].each { |id| db.put(make_doc(id)) }
+      ids = db.all_docs(startkey: "banana", endkey: "cherry")[:rows].map(&.["id"].as_s)
+      ids.should eq(%w[banana cherry])
+    end
+
+    it "returns empty rows when range has no matches" do
+      db = tmp_db
+      db.put(make_doc("apple"))
+      result = db.all_docs(startkey: "z")
+      result[:rows].should be_empty
+      result[:total_rows].should eq(1_i64)
+    end
   end
 
   describe "#changes" do

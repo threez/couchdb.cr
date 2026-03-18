@@ -73,12 +73,13 @@ module CouchDB
     end
 
     # Lists all non-deleted documents. Pass `include_docs: true` for full bodies,
-    # `limit`/`skip` for pagination.
-    def all_docs(include_docs : Bool = false, limit : Int32? = nil, skip : Int32 = 0) : NamedTuple(
+    # `limit`/`skip` for pagination, `startkey`/`endkey` for range queries (inclusive).
+    def all_docs(include_docs : Bool = false, limit : Int32? = nil, skip : Int32 = 0,
+                 startkey : String? = nil, endkey : String? = nil) : NamedTuple(
       total_rows: Int64,
       offset: Int32,
       rows: Array(JSON::Any))
-      @adapter.all_docs(include_docs, limit, skip)
+      @adapter.all_docs(include_docs, limit, skip, startkey, endkey)
     end
 
     # Returns changes since a sequence number. Use `"0"` to fetch all changes.

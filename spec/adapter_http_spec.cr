@@ -146,6 +146,16 @@ else
         end
         found.should be_true
       end
+
+      it "filters by startkey and endkey" do
+        db = http_db
+        %w[http-range-a http-range-b http-range-c].each { |id| db.put(make_doc(id)) }
+        result = db.all_docs(startkey: "http-range-b", endkey: "http-range-c")
+        ids = result[:rows].map(&.["id"].as_s)
+        ids.should contain("http-range-b")
+        ids.should contain("http-range-c")
+        ids.should_not contain("http-range-a")
+      end
     end
 
     describe "#changes" do
