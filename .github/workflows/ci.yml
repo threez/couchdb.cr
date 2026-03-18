@@ -27,22 +27,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: crystal-lang/install-crystal@v1
-      - run: shards install
-      - name: Log in to ghcr.io
-        uses: docker/login-action@v3
+      - uses: actions/setup-go@v5
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          go-version: stable
+      - run: go install github.com/goydb/goydb/cmd/goydb@latest
+      - run: shards install
       - name: Start goydb
         run: |
           mkdir -p /tmp/goydb-dbs /tmp/goydb-public
-          docker run -d --name goydb \
-            -p 7070:7070 \
-            -v /tmp/goydb-dbs:/dbs \
-            -v /tmp/goydb-public:/public \
-            ghcr.io/goydb/goydb:latest \
-            -addr :7070 -admins "admin:secret" -dbs /dbs -public /public
+          goydb -addr :7070 -admins "admin:secret" -dbs /tmp/goydb-dbs -public /tmp/goydb-public &
       - name: Wait for goydb
         run: timeout 30 bash -c 'until curl -sf http://localhost:7070/; do sleep 1; done'
       - run: make e2e
