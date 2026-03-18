@@ -131,6 +131,31 @@ module CouchDB
         {last_seq: last_seq, results: results}
       end
 
+      # HTTP implementation of `Adapter#changes_feed`. See `Adapter#changes_feed` for the contract.
+      def changes_feed(since : String = "0", heartbeat : Int32 = 1000,
+                       include_docs : Bool = false, &block : JSON::Any -> _)
+        params = "feed=continuous&since=#{since}&heartbeat=#{heartbeat}&include_docs=#{include_docs}"
+        path = "#{@db_path}/_changes?#{params}"
+
+        http = client
+        http.exec("GET", path, headers: default_headers) do |resp|
+          raise Error.new("HTTP #{resp.status_code}: #{resp.body_io.gets_to_end}") unless resp.status_code == 200
+
+          resp.body_io.each_line do |line|
+            stripped = line.strip
+            next if stripped.empty?
+
+            begin
+              parsed = JSON.parse(stripped)
+              next unless parsed["seq"]?
+              yield parsed
+            rescue JSON::ParseException
+              next
+            end
+          end
+        end
+      end
+
       # HTTP implementation of `Adapter#revs_diff`. See `Adapter#revs_diff` for the contract.
       def revs_diff(id_revs : Hash(String, Array(String))) : Hash(String, NamedTuple(missing: Array(String)))
         payload = id_revs.to_json

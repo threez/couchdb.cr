@@ -129,10 +129,38 @@ db.all_docs                                            # all non-deleted docs
 db.all_docs(include_docs: true, limit: 50, skip: 0)
 db.all_docs(startkey: "a", endkey: "m")               # range [a, m] inclusive
 db.all_docs(startkey: "note-", endkey: "note-\uffff") # prefix scan
-db.changes(since: "0")                                 # changes feed
+db.changes(since: "0")                                 # changes feed (snapshot)
 db.changes(since: seq, limit: 100, include_docs: true)
 db.info                                                # => {db_name:, doc_count:, update_seq:}
 ```
+
+### Changes Feed
+
+`changes_feed` opens a persistent streaming connection, yielding each change to a block. Call `break` to stop.
+
+```crystal
+# Stream all changes from the beginning
+db.changes_feed(since: "0") do |change|
+  puts "#{change["id"]} changed (seq #{change["seq"]})"
+  break if done?
+end
+
+# Pick up only changes after a known sequence, embedding full doc bodies
+db.changes_feed(since: last_seq, include_docs: true) do |change|
+  process(change["doc"])
+  save_checkpoint(change["seq"].as_s)
+  break if shutting_down?
+end
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `since` | `"0"` | Starting sequence (exclusive). `"0"` yields all changes. |
+| `heartbeat` | `1000` | Polling interval in ms (SQLite) or CouchDB heartbeat in ms (HTTP). |
+| `include_docs` | `false` | Embed full document bodies in each change entry. |
+
+**SQLite**: polls `update_seq` in a loop, sleeping `heartbeat` ms between polls.
+**HTTP**: opens a `feed=continuous` connection to CouchDB and reads the response body line by line.
 
 ### Attachments
 
@@ -231,7 +259,6 @@ The "winning" revision is the one with the highest `seq` for a given `id`. Delet
 
 ## Out of Scope (v0.1)
 
-- Continuous / longpoll changes feed
 - Conflict resolution hooks
 - Design documents and map-reduce views
 - Filtered replication

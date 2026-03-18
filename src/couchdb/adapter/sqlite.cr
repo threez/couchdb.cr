@@ -290,6 +290,47 @@ module CouchDB
         {last_seq: last_seq.to_s, results: results}
       end
 
+      # SQLite implementation of `Adapter#changes_feed`. See `Adapter#changes_feed` for the contract.
+      def changes_feed(since : String = "0", heartbeat : Int32 = 1000,
+                       include_docs : Bool = false, &block : JSON::Any -> _)
+        current_seq = since.to_i64? || 0_i64
+
+        loop do
+          sql = <<-SQL
+            SELECT u.seq, u.doc_id, u.doc_rev, d.deleted, d.body
+            FROM update_seq u
+            JOIN docs d ON d.id = u.doc_id AND d.rev = u.doc_rev
+            WHERE u.seq > ?
+            ORDER BY u.seq ASC
+          SQL
+
+          @db.query(sql, current_seq) do |rs|
+            rs.each do
+              seq = rs.read(Int64)
+              doc_id = rs.read(String)
+              doc_rev = rs.read(String)
+              deleted = rs.read(Int64) == 1
+              body = rs.read(String)
+
+              current_seq = seq
+
+              change = {
+                "seq"     => JSON::Any.new(seq.to_s),
+                "id"      => JSON::Any.new(doc_id),
+                "changes" => JSON::Any.new([JSON::Any.new({"rev" => JSON::Any.new(doc_rev)} of String => JSON::Any)] of JSON::Any),
+              } of String => JSON::Any
+
+              change["deleted"] = JSON::Any.new(true) if deleted
+              change["doc"] = JSON.parse(body) if include_docs
+
+              yield JSON::Any.new(change)
+            end
+          end
+
+          sleep heartbeat.milliseconds
+        end
+      end
+
       # SQLite implementation of `Adapter#revs_diff`. See `Adapter#revs_diff` for the contract.
       def revs_diff(id_revs : Hash(String, Array(String))) : Hash(String, NamedTuple(missing: Array(String)))
         result = {} of String => NamedTuple(missing: Array(String))

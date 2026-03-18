@@ -90,6 +90,14 @@ module CouchDB
       @adapter.changes(since, limit, include_docs)
     end
 
+    # Streams changes continuously, yielding each change entry to the block.
+    # Call `break` from the block to stop. `since` defaults to `"0"` (all changes).
+    # `heartbeat` controls polling interval (SQLite) or CouchDB heartbeat (HTTP) in ms.
+    def changes_feed(since : String = "0", heartbeat : Int32 = 1000,
+                     include_docs : Bool = false, &block : JSON::Any -> _)
+      @adapter.changes_feed(since, heartbeat, include_docs, &block)
+    end
+
     # Returns missing revisions for the given `id → [revs]` map.
     # Used internally by the replication engine.
     def revs_diff(id_revs : Hash(String, Array(String))) : Hash(String, NamedTuple(missing: Array(String)))

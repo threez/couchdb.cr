@@ -52,6 +52,14 @@ module CouchDB
       last_seq: String,
       results: Array(JSON::Any))
 
+    # Streams changes continuously, yielding each change as a `JSON::Any` to the block.
+    # The caller can `break` from the block to stop the feed.
+    #
+    # `since` — starting sequence (`"0"` for all). `heartbeat` — polling interval in ms
+    # (SQLite) or CouchDB heartbeat interval in ms (HTTP). `include_docs: true` embeds
+    # full document bodies.
+    abstract def changes_feed(since : String, heartbeat : Int32, include_docs : Bool, &block : JSON::Any -> _)
+
     # Given a map of `id → [revs]`, returns only the revisions missing from this adapter.
     #
     # Used by the replication engine to determine which documents need to be transferred.

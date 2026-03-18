@@ -169,6 +169,49 @@ describe CouchDB::Adapter::SQLite do
     end
   end
 
+  describe "#changes_feed" do
+    it "yields pre-existing changes and stops on break" do
+      db = tmp_db
+      db.put(make_doc("feed-a"))
+      db.put(make_doc("feed-b"))
+
+      seen = [] of String
+      db.changes_feed(since: "0", heartbeat: 50) do |change|
+        seen << change["id"].as_s
+        break if seen.size >= 2
+      end
+
+      seen.size.should eq(2)
+      seen.should contain("feed-a")
+      seen.should contain("feed-b")
+    end
+
+    it "picks up changes after the given since seq" do
+      db = tmp_db
+      db.put(make_doc("feed-c"))
+      seq = db.changes(since: "0")[:last_seq]
+      db.put(make_doc("feed-d"))
+
+      seen = [] of String
+      db.changes_feed(since: seq, heartbeat: 50) do |change|
+        seen << change["id"].as_s
+        break
+      end
+
+      seen.should eq(["feed-d"])
+    end
+
+    it "includes doc bodies when include_docs: true" do
+      db = tmp_db
+      db.put(make_doc("feed-e", val: "check"))
+
+      db.changes_feed(since: "0", heartbeat: 50, include_docs: true) do |change|
+        change["doc"]["val"].as_s.should eq("check") if change["id"].as_s == "feed-e"
+        break
+      end
+    end
+  end
+
   describe "#revs_diff" do
     it "returns missing revisions" do
       db = tmp_db

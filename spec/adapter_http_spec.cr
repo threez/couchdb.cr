@@ -177,6 +177,23 @@ else
       end
     end
 
+    describe "#changes_feed" do
+      it "streams changes via feed=continuous" do
+        db = http_db
+        baseline = db.changes(since: "0")[:last_seq]
+        db.put(make_doc("http-feed-a"))
+
+        seen = [] of JSON::Any
+        db.changes_feed(since: baseline, heartbeat: 1000) do |change|
+          seen << change
+          break
+        end
+
+        seen.size.should eq(1)
+        seen.first["id"].as_s.should eq("http-feed-a")
+      end
+    end
+
     describe "#revs_diff" do
       it "returns missing revisions" do
         db = http_db
