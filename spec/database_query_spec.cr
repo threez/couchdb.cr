@@ -33,13 +33,13 @@ describe CouchDB::Database do
       db = mem_db
       seed(db, "doc-1", tags: "a")
 
-      result = db.query do |doc, emit|
+      result = db.query do |_, emit|
         emit.call(JSON::Any.new("tag-a"), JSON::Any.new(nil))
         emit.call(JSON::Any.new("tag-b"), JSON::Any.new(nil))
       end
 
       result[:total_rows].should eq(2_i64)
-      result[:rows].map { |r| r["key"].as_s }.should eq(["tag-a", "tag-b"])
+      result[:rows].map(&.["key"].as_s).should eq(["tag-a", "tag-b"])
     end
 
     it "filters by exact key" do
@@ -66,7 +66,7 @@ describe CouchDB::Database do
       end
 
       result[:rows].size.should eq(2)
-      result[:rows].map { |r| r["key"].as_s }.sort.should eq(["event", "note"])
+      result[:rows].map(&.["key"].as_s).sort!.should eq(["event", "note"])
     end
 
     it "filters by startkey/endkey range (inclusive)" do
@@ -80,12 +80,12 @@ describe CouchDB::Database do
         emit.call(JSON::Any.new(doc["label"].as_s), JSON::Any.new(nil))
       end
 
-      result[:rows].map { |r| r["key"].as_s }.should eq(["b", "c"])
+      result[:rows].map(&.["key"].as_s).should eq(["b", "c"])
     end
 
     it "applies limit and skip; total_rows reflects pre-skip count" do
       db = mem_db
-      ("a".."e").each_with_index { |ch, i| seed(db, "doc-#{i}", label: ch) }
+      ("a".."e").each_with_index { |char, idx| seed(db, "doc-#{idx}", label: char) }
 
       result = db.query(limit: 2, skip: 1) do |doc, emit|
         emit.call(JSON::Any.new(doc["label"].as_s), JSON::Any.new(nil))
@@ -107,12 +107,12 @@ describe CouchDB::Database do
         emit.call(JSON::Any.new(doc["label"].as_s), JSON::Any.new(nil))
       end
 
-      result[:rows].map { |r| r["key"].as_s }.should eq(["c", "b", "a"])
+      result[:rows].map(&.["key"].as_s).should eq(["c", "b", "a"])
     end
 
     it "descending + startkey/endkey swaps bounds correctly" do
       db = mem_db
-      ("a".."e").each_with_index { |ch, i| seed(db, "doc-#{i}", label: ch) }
+      ("a".."e").each_with_index { |char, idx| seed(db, "doc-#{idx}", label: char) }
 
       # descending from "d" down to "b"
       result = db.query(
@@ -123,7 +123,7 @@ describe CouchDB::Database do
         emit.call(JSON::Any.new(doc["label"].as_s), JSON::Any.new(nil))
       end
 
-      result[:rows].map { |r| r["key"].as_s }.should eq(["d", "c", "b"])
+      result[:rows].map(&.["key"].as_s).should eq(["d", "c", "b"])
     end
 
     it "embeds full doc when include_docs: true" do
@@ -175,7 +175,7 @@ describe CouchDB::Database do
         emit.call(JSON::Any.new(doc["type"].as_s), JSON::Any.new(nil))
       end
 
-      rows_by_key = result[:rows].to_h { |r| {r["key"].as_s, r["value"].as_i64} }
+      rows_by_key = result[:rows].to_h { |row| {row["key"].as_s, row["value"].as_i64} }
       rows_by_key["note"].should eq(2_i64)
       rows_by_key["task"].should eq(1_i64)
     end
@@ -230,7 +230,7 @@ describe CouchDB::Database do
         emit.call(key, JSON::Any.new(nil))
       end
 
-      rows_by_year = result[:rows].to_h { |r| {r["key"].as_a.first.as_i64, r["value"].as_i64} }
+      rows_by_year = result[:rows].to_h { |row| {row["key"].as_a.first.as_i64, row["value"].as_i64} }
       rows_by_year[2024_i64].should eq(2_i64)
       rows_by_year[2025_i64].should eq(1_i64)
     end
@@ -238,7 +238,7 @@ describe CouchDB::Database do
     it "raises ArgumentError for unknown reduce function; empty DB returns empty rows" do
       db = mem_db
 
-      result = db.query do |doc, emit|
+      result = db.query do |_, emit|
         emit.call(JSON::Any.new(nil), JSON::Any.new(nil))
       end
       result[:rows].should be_empty
@@ -247,7 +247,7 @@ describe CouchDB::Database do
       db2 = mem_db
       seed(db2, "doc-1", type: "note")
       expect_raises(ArgumentError, "Unknown reduce function") do
-        db2.query(reduce: "_custom") do |doc, emit|
+        db2.query(reduce: "_custom") do |_, emit|
           emit.call(JSON::Any.new(nil), JSON::Any.new(nil))
         end
       end

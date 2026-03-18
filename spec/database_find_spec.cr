@@ -183,7 +183,7 @@ describe CouchDB::Database do
 
       result = db.find(sel(%({"n": {"$mod": [2, 0]}})))
       result[:docs].size.should eq(2)
-      result[:docs].map { |d| d["n"].as_i64 }.sort.should eq([2_i64, 4_i64])
+      result[:docs].map(&.["n"].as_i64).sort!.should eq([2_i64, 4_i64])
     end
 
     it "$regex — string matches pattern" do
@@ -268,7 +268,7 @@ describe CouchDB::Database do
       seed(db, "doc-3", name: "Bob")
 
       result = db.find(sel("{}"), sort: [JSON::Any.new("name")])
-      result[:docs].map { |d| d["name"].as_s }.should eq(["Alice", "Bob", "Charlie"])
+      result[:docs].map(&.["name"].as_s).should eq(["Alice", "Bob", "Charlie"])
     end
 
     it "sort: descending by single field" do
@@ -278,7 +278,7 @@ describe CouchDB::Database do
       seed(db, "doc-3", name: "Bob")
 
       result = db.find(sel("{}"), sort: [JSON.parse(%({"name": "desc"}))])
-      result[:docs].map { |d| d["name"].as_s }.should eq(["Charlie", "Bob", "Alice"])
+      result[:docs].map(&.["name"].as_s).should eq(["Charlie", "Bob", "Alice"])
     end
 
     it "sort: multi-key (primary + secondary)" do
@@ -288,7 +288,7 @@ describe CouchDB::Database do
       seed(db, "doc-3", group: "b", rank: 1_i64)
 
       result = db.find(sel("{}"), sort: [JSON::Any.new("group"), JSON::Any.new("rank")])
-      result[:docs].map { |d| d["_id"].as_s }.should eq(["doc-2", "doc-1", "doc-3"])
+      result[:docs].map(&.["_id"].as_s).should eq(["doc-2", "doc-1", "doc-3"])
     end
 
     it "fields: projection — result contains only listed keys" do
@@ -308,7 +308,7 @@ describe CouchDB::Database do
 
       result = db.find(sel("{}"), sort: [JSON::Any.new("n")], limit: 2, skip: 1)
       result[:docs].size.should eq(2)
-      result[:docs].map { |d| d["n"].as_i64 }.should eq([2_i64, 3_i64])
+      result[:docs].map(&.["n"].as_i64).should eq([2_i64, 3_i64])
     end
 
     it "result always includes warning: string" do
@@ -317,7 +317,7 @@ describe CouchDB::Database do
 
       result = db.find(sel("{}"))
       result[:warning].should_not be_nil
-      result[:warning].not_nil!.should_not be_empty
+      result[:warning].as(String).should_not be_empty
     end
 
     it "unknown operator raises ArgumentError" do

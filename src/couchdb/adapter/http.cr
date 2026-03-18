@@ -133,7 +133,7 @@ module CouchDB
 
       # HTTP implementation of `Adapter#changes_feed`. See `Adapter#changes_feed` for the contract.
       def changes_feed(since : String = "0", heartbeat : Int32 = 1000,
-                       include_docs : Bool = false, &block : JSON::Any -> _)
+                       include_docs : Bool = false, & : JSON::Any -> _)
         params = "feed=continuous&since=#{since}&heartbeat=#{heartbeat}&include_docs=#{include_docs}"
         path = "#{@db_path}/_changes?#{params}"
 

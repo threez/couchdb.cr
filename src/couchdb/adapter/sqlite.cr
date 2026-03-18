@@ -292,7 +292,7 @@ module CouchDB
 
       # SQLite implementation of `Adapter#changes_feed`. See `Adapter#changes_feed` for the contract.
       def changes_feed(since : String = "0", heartbeat : Int32 = 1000,
-                       include_docs : Bool = false, &block : JSON::Any -> _)
+                       include_docs : Bool = false, & : JSON::Any -> _)
         current_seq = since.to_i64? || 0_i64
 
         loop do
@@ -304,13 +304,13 @@ module CouchDB
             ORDER BY u.seq ASC
           SQL
 
-          @db.query(sql, current_seq) do |rs|
-            rs.each do
-              seq = rs.read(Int64)
-              doc_id = rs.read(String)
-              doc_rev = rs.read(String)
-              deleted = rs.read(Int64) == 1
-              body = rs.read(String)
+          @db.query(sql, current_seq) do |result_set|
+            result_set.each do
+              seq = result_set.read(Int64)
+              doc_id = result_set.read(String)
+              doc_rev = result_set.read(String)
+              deleted = result_set.read(Int64) == 1
+              body = result_set.read(String)
 
               current_seq = seq
 

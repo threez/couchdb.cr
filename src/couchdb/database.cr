@@ -18,7 +18,11 @@ module CouchDB
   class Database
     include Adapter
 
-    getter adapter : Adapter
+    @adapter : Adapter::HTTP | Adapter::SQLite
+
+    def adapter : Adapter
+      @adapter
+    end
 
     # Resolver for `put` conflicts: receives (existing, attempted), returns a Document
     # to write (system stamps the current rev) or nil to re-raise.
@@ -83,13 +87,13 @@ module CouchDB
     # a rev mismatch. Returns `{ok: true, id:, rev:}`.
     def put(doc : Document) : NamedTuple(ok: Bool, id: String, rev: String)
       @adapter.put(doc)
-    rescue conflict : Conflict
+    rescue ex : Conflict
       resolver = @put_conflict_resolver
-      raise conflict unless resolver
+      raise ex unless resolver
 
       existing = @adapter.get(doc.id)
       resolved = resolver.call(existing, doc)
-      raise conflict unless resolved
+      raise ex unless resolved
 
       resolved.rev = existing.rev
       @adapter.put(resolved)
@@ -98,13 +102,13 @@ module CouchDB
     # Soft-deletes a document by writing a tombstone. Raises `Conflict` on rev mismatch.
     def remove(id : String, rev : String) : NamedTuple(ok: Bool)
       @adapter.remove(id, rev)
-    rescue conflict : Conflict
+    rescue ex : Conflict
       resolver = @remove_conflict_resolver
-      raise conflict unless resolver
+      raise ex unless resolver
 
       existing = @adapter.get(id)
       result = resolver.call(existing, rev)
-      raise conflict unless result
+      raise ex unless result
 
       @adapter.remove(id, existing.rev || "")
     end
@@ -156,8 +160,8 @@ module CouchDB
     # Call `break` from the block to stop. `since` defaults to `"0"` (all changes).
     # `heartbeat` controls polling interval (SQLite) or CouchDB heartbeat (HTTP) in ms.
     def changes_feed(since : String = "0", heartbeat : Int32 = 1000,
-                     include_docs : Bool = false, &block : JSON::Any -> _)
-      @adapter.changes_feed(since, heartbeat, include_docs, &block)
+                     include_docs : Bool = false, & : JSON::Any -> _)
+      @adapter.changes_feed(since, heartbeat, include_docs) { |feed_entry| yield feed_entry }
     end
 
     # Returns missing revisions for the given `id → [revs]` map.
@@ -249,7 +253,7 @@ module CouchDB
       end
 
       # 4. Sort by CouchDB collation order
-      emitted.sort! { |a, b| compare_json_keys(a.key, b.key) }
+      emitted.sort! { |lhs, rhs| compare_json_keys(lhs.key, rhs.key) }
 
       # 5. Descending: reverse + swap key bounds for filtering
       eff_start = startkey
@@ -260,11 +264,11 @@ module CouchDB
       end
 
       # 6. Filter
-      filtered = emitted.select { |r| query_key_matches?(r.key, key, keys, eff_start, eff_end) }
+      filtered = emitted.select { |emitted_row| query_key_matches?(emitted_row.key, key, keys, eff_start, eff_end) }
       total_rows = filtered.size.to_i64
 
       # 7. Reduce path (skip/limit not applied to reduce results)
-      if (fn = reduce)
+      if fn = reduce
         return {total_rows: total_rows, offset: 0,
                 rows: apply_reduce(fn, filtered, group || !group_level.nil?, group_level)}
       end
@@ -274,15 +278,7 @@ module CouchDB
       paged = paged.first(limit) if limit
 
       # 9. Build output rows
-      rows = paged.map do |r|
-        entry = {
-          "id"    => JSON::Any.new(r.doc_id),
-          "key"   => r.key || JSON::Any.new(nil),
-          "value" => r.value || JSON::Any.new(nil),
-        } of String => JSON::Any
-        entry["doc"] = doc_lookup[r.doc_id] if include_docs
-        JSON::Any.new(entry)
-      end
+      rows = build_query_rows(paged, include_docs, doc_lookup)
 
       {total_rows: total_rows, offset: skip, rows: rows}
     end
@@ -324,7 +320,7 @@ module CouchDB
       paged = docs[skip..]? || [] of JSON::Any
       paged = paged.first(limit) if limit
 
-      result_docs = if (f = fields)
+      result_docs = if f = fields
                       paged.map { |doc| project_doc_fields(doc, f).as(JSON::Any) }
                     else
                       paged
@@ -374,11 +370,11 @@ module CouchDB
       when 0, 1, 2
         0 # null / false / true: same rank means value equality
       when 3
-        (a.not_nil!.raw.as(Int64 | Float64).to_f64 <=> b.not_nil!.raw.as(Int64 | Float64).to_f64) || 0
+        (a.as(JSON::Any).raw.as(Int64 | Float64).to_f64 <=> b.as(JSON::Any).raw.as(Int64 | Float64).to_f64) || 0
       when 4
-        (a.not_nil!.as_s <=> b.not_nil!.as_s) || 0
+        (a.as(JSON::Any).as_s <=> b.as(JSON::Any).as_s) || 0
       when 5
-        arr_a, arr_b = a.not_nil!.as_a, b.not_nil!.as_a
+        arr_a, arr_b = a.as(JSON::Any).as_a, b.as(JSON::Any).as_a
         arr_a.each_with_index do |elem, i|
           return 1 if i >= arr_b.size
           cmp = compare_json_keys(elem, arr_b[i])
@@ -386,7 +382,7 @@ module CouchDB
         end
         (arr_a.size <=> arr_b.size) || 0
       else
-        (a.not_nil!.to_json <=> b.not_nil!.to_json) || 0
+        (a.as(JSON::Any).to_json <=> b.as(JSON::Any).to_json) || 0
       end
     end
 
@@ -450,14 +446,30 @@ module CouchDB
           "value" => reduce_values(fn, rows.map(&.value)),
         } of String => JSON::Any)]
       end
-      groups = Hash(String, Array(EmittedRow)).new { |h, k| h[k] = [] of EmittedRow }
-      rows.each { |r| groups[group_key_for(r.key, group_level).to_json] << r }
-      groups.map do |_, g|
-        gkey = group_key_for(g.first.key, group_level)
+      groups = Hash(String, Array(EmittedRow)).new { |hash, key| hash[key] = [] of EmittedRow }
+      rows.each { |emitted_row| groups[group_key_for(emitted_row.key, group_level).to_json] << emitted_row }
+      groups.map do |_, grp|
+        gkey = group_key_for(grp.first.key, group_level)
         JSON::Any.new({
           "key"   => gkey || JSON::Any.new(nil),
-          "value" => reduce_values(fn, g.map(&.value)),
+          "value" => reduce_values(fn, grp.map(&.value)),
         } of String => JSON::Any)
+      end
+    end
+
+    private def build_query_rows(
+      paged : Array(EmittedRow),
+      include_docs : Bool,
+      doc_lookup : Hash(String, JSON::Any),
+    ) : Array(JSON::Any)
+      paged.map do |row|
+        entry = {
+          "id"    => JSON::Any.new(row.doc_id),
+          "key"   => row.key || JSON::Any.new(nil),
+          "value" => row.value || JSON::Any.new(nil),
+        } of String => JSON::Any
+        entry["doc"] = doc_lookup[row.doc_id] if include_docs
+        JSON::Any.new(entry)
       end
     end
 
@@ -488,9 +500,9 @@ module CouchDB
     private def match_selector?(doc : JSON::Any, selector : JSON::Any) : Bool
       selector.as_h.all? do |key, condition|
         case key
-        when "$and" then condition.as_a.all? { |s| match_selector?(doc, s) }
-        when "$or"  then condition.as_a.any? { |s| match_selector?(doc, s) }
-        when "$nor" then condition.as_a.none? { |s| match_selector?(doc, s) }
+        when "$and" then condition.as_a.all? { |sub| match_selector?(doc, sub) }
+        when "$or"  then condition.as_a.any? { |sub| match_selector?(doc, sub) }
+        when "$nor" then condition.as_a.none? { |sub| match_selector?(doc, sub) }
         when "$not" then !match_selector?(doc, condition)
         else             match_condition?(doc_field(doc, key), condition)
         end
@@ -510,38 +522,68 @@ module CouchDB
     # Dispatches a single Mango operator against a field value.
     private def match_operator?(field_val : JSON::Any?, op : String, operand : JSON::Any) : Bool
       case op
-      when "$eq"     then compare_json_keys(field_val, operand) == 0
-      when "$ne"     then compare_json_keys(field_val, operand) != 0
-      when "$lt"     then !!field_val && compare_json_keys(field_val, operand) < 0
-      when "$lte"    then !!field_val && compare_json_keys(field_val, operand) <= 0
-      when "$gt"     then !!field_val && compare_json_keys(field_val, operand) > 0
-      when "$gte"    then !!field_val && compare_json_keys(field_val, operand) >= 0
-      when "$exists" then operand.as_bool ? !field_val.nil? : field_val.nil?
-      when "$type"   then !!field_val && json_type_name(field_val.not_nil!) == operand.as_s
-      when "$in"     then operand.as_a.any? { |e| compare_json_keys(field_val, e) == 0 }
-      when "$nin"    then operand.as_a.none? { |e| compare_json_keys(field_val, e) == 0 }
-      when "$not"    then !match_condition?(field_val, operand)
-      when "$all"
-        return false unless field_val && field_val.raw.is_a?(Array)
-        arr = field_val.as_a
-        operand.as_a.all? { |e| arr.any? { |item| compare_json_keys(item, e) == 0 } }
-      when "$size"
-        return false unless field_val && field_val.raw.is_a?(Array)
-        field_val.as_a.size == operand.raw.as(Int64 | Float64).to_i
-      when "$mod"
-        return false unless field_val && (field_val.raw.is_a?(Int64) || field_val.raw.is_a?(Float64))
-        divisor = operand.as_a[0].raw.as(Int64 | Float64).to_i64
-        remainder = operand.as_a[1].raw.as(Int64 | Float64).to_i64
-        field_val.raw.as(Int64 | Float64).to_i64 % divisor == remainder
-      when "$regex"
-        return false unless field_val && field_val.raw.is_a?(String)
-        Regex.new(operand.as_s).matches?(field_val.as_s)
-      when "$elemMatch"
-        return false unless field_val && field_val.raw.is_a?(Array)
-        field_val.as_a.any? { |elem| match_selector?(elem, operand) }
+      when "$eq", "$ne", "$lt", "$lte", "$gt", "$gte"
+        match_relational_op?(field_val, op, operand)
+      when "$exists", "$type", "$in", "$nin", "$not"
+        match_membership_op?(field_val, op, operand)
+      when "$all", "$size", "$mod", "$regex", "$elemMatch"
+        match_structure_op?(field_val, op, operand)
       else
         raise ArgumentError.new("Unknown operator: #{op}")
       end
+    end
+
+    private def match_relational_op?(field_val : JSON::Any?, op : String, operand : JSON::Any) : Bool
+      case op
+      when "$eq"  then compare_json_keys(field_val, operand) == 0
+      when "$ne"  then compare_json_keys(field_val, operand) != 0
+      when "$lt"  then !!field_val && compare_json_keys(field_val, operand) < 0
+      when "$lte" then !!field_val && compare_json_keys(field_val, operand) <= 0
+      when "$gt"  then !!field_val && compare_json_keys(field_val, operand) > 0
+      else             !!field_val && compare_json_keys(field_val, operand) >= 0 # $gte
+      end
+    end
+
+    private def match_membership_op?(field_val : JSON::Any?, op : String, operand : JSON::Any) : Bool
+      case op
+      when "$exists" then operand.as_bool ? !field_val.nil? : field_val.nil?
+      when "$type"
+        return false unless field_val
+        json_type_name(field_val.as(JSON::Any)) == operand.as_s
+      when "$in"  then operand.as_a.any? { |elem| compare_json_keys(field_val, elem) == 0 }
+      when "$nin" then operand.as_a.none? { |elem| compare_json_keys(field_val, elem) == 0 }
+      else             !match_condition?(field_val, operand) # $not
+      end
+    end
+
+    private def match_structure_op?(field_val : JSON::Any?, op : String, operand : JSON::Any) : Bool
+      return match_mod_op?(field_val, operand) if op == "$mod"
+      return match_regex_op?(field_val, operand) if op == "$regex"
+      return false unless field_val && field_val.raw.is_a?(Array)
+      arr = field_val.as_a
+      case op
+      when "$all"  then match_all_op?(arr, operand.as_a)
+      when "$size" then arr.size == operand.raw.as(Int64 | Float64).to_i
+      else              arr.any? { |elem| match_selector?(elem, operand) } # $elemMatch
+      end
+    end
+
+    private def match_all_op?(arr : Array(JSON::Any), required : Array(JSON::Any)) : Bool
+      required.all? { |elem| arr.any? { |item| compare_json_keys(item, elem) == 0 } }
+    end
+
+    private def match_mod_op?(field_val : JSON::Any?, operand : JSON::Any) : Bool
+      return false unless field_val
+      num = field_val.raw
+      return false unless num.is_a?(Int64) || num.is_a?(Float64)
+      divisor = operand.as_a[0].raw.as(Int64 | Float64).to_i64
+      remainder = operand.as_a[1].raw.as(Int64 | Float64).to_i64
+      num.as(Int64 | Float64).to_i64 % divisor == remainder
+    end
+
+    private def match_regex_op?(field_val : JSON::Any?, operand : JSON::Any) : Bool
+      return false unless field_val && field_val.raw.is_a?(String)
+      Regex.new(operand.as_s).matches?(field_val.as_s)
     end
 
     # Sorts docs by the sort spec. Each element is a bare string (asc)
@@ -556,10 +598,10 @@ module CouchDB
         else raise ArgumentError.new("Invalid sort item: #{item.inspect}")
         end
       end
-      docs.sort do |a, b|
+      docs.sort do |lhs, rhs|
         result = 0
         sort_spec.each do |(field, desc)|
-          cmp = compare_json_keys(doc_field(a, field), doc_field(b, field))
+          cmp = compare_json_keys(doc_field(lhs, field), doc_field(rhs, field))
           cmp = -cmp if desc
           result = cmp
           break unless result == 0
@@ -571,9 +613,9 @@ module CouchDB
     # Projects a doc to only the listed field names (dot-notation stored flat).
     private def project_doc_fields(doc : JSON::Any, fields : Array(String)) : JSON::Any
       h = {} of String => JSON::Any
-      fields.each do |f|
-        val = doc_field(doc, f)
-        h[f] = val if val
+      fields.each do |field_name|
+        val = doc_field(doc, field_name)
+        h[field_name] = val if val
       end
       JSON::Any.new(h)
     end
