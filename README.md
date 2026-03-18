@@ -226,12 +226,19 @@ shards install
 crystal spec          # all specs run without a CouchDB instance
 ```
 
-To run integration tests against a real CouchDB (optional):
+To run e2e tests against a live server (optional):
 
 ```bash
-docker run -d -p 5984:5984 -e COUCHDB_USER=admin -e COUCHDB_PASSWORD=password couchdb:3
-crystal spec
+# Option A: locally installed goydb
+make goydb            # starts goydb on :7070 (foreground)
+make e2e              # in another terminal
+
+# Option B: Docker
+docker run -d -p 7070:7070 ghcr.io/goydb/goydb:latest
+make e2e
 ```
+
+`COUCHDB_URL` defaults to `http://admin:secret@localhost:7070`. Override to point at any CouchDB-compatible server.
 
 ## Contributing
 

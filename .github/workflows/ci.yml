@@ -19,3 +19,24 @@ jobs:
       - run: brew install crystal
       - run: shards install
       - run: make spec
+
+  e2e:
+    runs-on: ubuntu-latest
+    env:
+      COUCHDB_URL: http://admin:secret@localhost:7070
+    steps:
+      - uses: actions/checkout@v4
+      - uses: crystal-lang/install-crystal@v1
+      - run: shards install
+      - name: Start goydb
+        run: |
+          mkdir -p /tmp/goydb-dbs /tmp/goydb-public
+          docker run -d --name goydb \
+            -p 7070:7070 \
+            -v /tmp/goydb-dbs:/dbs \
+            -v /tmp/goydb-public:/public \
+            ghcr.io/goydb/goydb:latest \
+            -addr :7070 -admins "admin:secret" -dbs /dbs -public /public
+      - name: Wait for goydb
+        run: timeout 30 bash -c 'until curl -sf http://localhost:7070/; do sleep 1; done'
+      - run: make e2e
