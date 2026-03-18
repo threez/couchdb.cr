@@ -125,6 +125,25 @@ module CouchDB
       @adapter.all_docs(include_docs, limit, skip, startkey, endkey)
     end
 
+    # Typed overload — deserializes each row's `doc` into *klass*.
+    # Implies `include_docs: true`; all other parameters work identically.
+    #
+    # Example:
+    # ```
+    # result = db.all_docs(as: Note, limit: 50)
+    # result[:rows] # => Array(Note)
+    # result[:total_rows]
+    # ```
+    def all_docs(as klass : T.class, limit : Int32? = nil, skip : Int32 = 0,
+                 startkey : String? = nil, endkey : String? = nil) : NamedTuple(
+      total_rows: Int64,
+      offset: Int32,
+      rows: Array(T)) forall T
+      raw = @adapter.all_docs(true, limit, skip, startkey, endkey)
+      typed_rows = raw[:rows].map { |row| klass.from_json(row["doc"].to_json) }
+      {total_rows: raw[:total_rows], offset: raw[:offset], rows: typed_rows}
+    end
+
     # Returns changes since a sequence number. Use `"0"` to fetch all changes.
     # Pass `include_docs: true` to embed full document bodies in each change entry.
     def changes(since : String = "0", limit : Int32? = nil, include_docs : Bool = false) : NamedTuple(

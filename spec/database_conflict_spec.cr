@@ -4,6 +4,11 @@ private def mem_db : CouchDB::Database
   CouchDB::Database.new(":memory:")
 end
 
+private class Widget < CouchDB::Document
+  property name : String = ""
+  property qty : Int32 = 0
+end
+
 private def make_doc(id : String, **fields) : CouchDB::Document
   doc = CouchDB::Document.new
   doc.id = id
@@ -128,6 +133,55 @@ describe CouchDB::Database do
       expect_raises(CouchDB::Conflict) { db.remove("rm-inspect", "0-stale") }
       seen_existing_rev.should eq(r1[:rev])
       seen_attempted_rev.should eq("0-stale")
+    end
+  end
+
+  describe "#all_docs(as:)" do
+    it "returns typed rows" do
+      db = mem_db
+      w = Widget.new
+      w.id = "w1"
+      w.name = "Bolt"
+      w.qty = 42
+      db.put(w)
+      result = db.all_docs(as: Widget)
+      result[:total_rows].should eq(1_i64)
+      result[:rows].first.should be_a(Widget)
+      result[:rows].first.name.should eq("Bolt")
+      result[:rows].first.qty.should eq(42)
+    end
+
+    it "preserves total_rows and offset" do
+      db = mem_db
+      3.times do |i|
+        w = Widget.new
+        w.id = "w#{i}"
+        w.name = "item#{i}"
+        db.put(w)
+      end
+      result = db.all_docs(as: Widget, limit: 2, skip: 1)
+      result[:total_rows].should eq(3_i64)
+      result[:offset].should eq(1)
+      result[:rows].size.should eq(2)
+    end
+
+    it "respects startkey/endkey" do
+      db = mem_db
+      %w[apple banana cherry].each do |id|
+        w = Widget.new
+        w.id = id
+        w.name = id
+        db.put(w)
+      end
+      result = db.all_docs(as: Widget, startkey: "banana", endkey: "cherry")
+      result[:rows].map(&.name).should eq(%w[banana cherry])
+    end
+
+    it "returns an empty array when no docs match" do
+      db = mem_db
+      result = db.all_docs(as: Widget)
+      result[:rows].should be_empty
+      result[:total_rows].should eq(0_i64)
     end
   end
 end

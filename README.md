@@ -81,6 +81,10 @@ fetched = db.get("note-1", as: Note)
 puts fetched.title   # => "Shopping list"
 puts fetched.id      # => "note-1"
 puts fetched.rev     # => "1-..."
+
+# List all notes as typed objects
+result = db.all_docs(as: Note)
+result[:rows].each { |note| puts note.title }
 ```
 
 Extra fields not declared on the subclass are still preserved in `json_unmapped` and round-trip through replication without loss.
@@ -129,6 +133,8 @@ db.all_docs                                            # all non-deleted docs
 db.all_docs(include_docs: true, limit: 50, skip: 0)
 db.all_docs(startkey: "a", endkey: "m")               # range [a, m] inclusive
 db.all_docs(startkey: "note-", endkey: "note-\uffff") # prefix scan
+db.all_docs(as: Note)                                  # typed rows — implies include_docs: true
+db.all_docs(as: Note, limit: 50, startkey: "note-")   # typed + range/pagination
 db.changes(since: "0")                                 # changes feed (snapshot)
 db.changes(since: seq, limit: 100, include_docs: true)
 db.info                                                # => {db_name:, doc_count:, update_seq:}
