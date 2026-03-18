@@ -20,6 +20,17 @@ module CouchDB
 
     getter adapter : Adapter
 
+    # Resolver for `put` conflicts: receives (existing, attempted), returns a Document
+    # to write (system stamps the current rev) or nil to re-raise.
+    alias PutConflictResolver = Proc(Document, Document, Document?)
+
+    # Resolver for `remove` conflicts: receives (existing, attempted_rev), returns
+    # true to retry the delete with the current rev, or nil to re-raise.
+    alias RemoveConflictResolver = Proc(Document, String, Bool?)
+
+    @put_conflict_resolver : PutConflictResolver? = nil
+    @remove_conflict_resolver : RemoveConflictResolver? = nil
+
     # Creates a new database, auto-selecting the adapter based on *location*.
     #
     # - `"http://..."` or `"https://..."` → `Adapter::HTTP` (remote CouchDB)
@@ -55,15 +66,47 @@ module CouchDB
       klass.from_json(@adapter.get(id).to_json)
     end
 
+    # Register a block invoked when `put` raises Conflict.
+    # Return a Document to retry (system sets the correct rev automatically).
+    # Return nil to re-raise. Raise to propagate a custom exception.
+    def on_conflict(&block : Document, Document -> Document?)
+      @put_conflict_resolver = block
+    end
+
+    # Register a block invoked when `remove` raises Conflict.
+    # Return true to retry the delete with the current rev. Return nil to re-raise.
+    def on_remove_conflict(&block : Document, String -> Bool?)
+      @remove_conflict_resolver = block
+    end
+
     # Creates or updates a document. Pass `doc.rev` for updates. Raises `Conflict` on
     # a rev mismatch. Returns `{ok: true, id:, rev:}`.
     def put(doc : Document) : NamedTuple(ok: Bool, id: String, rev: String)
       @adapter.put(doc)
+    rescue conflict : Conflict
+      resolver = @put_conflict_resolver
+      raise conflict unless resolver
+
+      existing = @adapter.get(doc.id)
+      resolved = resolver.call(existing, doc)
+      raise conflict unless resolved
+
+      resolved.rev = existing.rev
+      @adapter.put(resolved)
     end
 
     # Soft-deletes a document by writing a tombstone. Raises `Conflict` on rev mismatch.
     def remove(id : String, rev : String) : NamedTuple(ok: Bool)
       @adapter.remove(id, rev)
+    rescue conflict : Conflict
+      resolver = @remove_conflict_resolver
+      raise conflict unless resolver
+
+      existing = @adapter.get(id)
+      result = resolver.call(existing, rev)
+      raise conflict unless result
+
+      @adapter.remove(id, existing.rev || "")
     end
 
     # Batch write. Pass `new_edits: false` for the replication write path (bypasses

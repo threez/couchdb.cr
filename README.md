@@ -162,6 +162,47 @@ end
 **SQLite**: polls `update_seq` in a loop, sleeping `heartbeat` ms between polls.
 **HTTP**: opens a `feed=continuous` connection to CouchDB and reads the response body line by line.
 
+### Conflict Resolution
+
+Register a hook on a `Database` instance to handle `put` or `remove` conflicts automatically instead of rescuing `Conflict` manually.
+
+**`on_conflict`** — invoked when `put` raises `Conflict` (stale `_rev`):
+
+```crystal
+db.on_conflict do |existing, attempted|
+  # existing  — the current document in the database (fresh rev)
+  # attempted — the document you tried to write
+  # Return a Document to retry with (rev is set automatically), or nil to re-raise.
+  attempted   # last-write-wins
+end
+```
+
+**`on_remove_conflict`** — invoked when `remove` raises `Conflict`:
+
+```crystal
+db.on_remove_conflict do |existing, attempted_rev|
+  # existing      — the current document in the database
+  # attempted_rev — the stale rev you passed to remove
+  # Return true to retry the delete with the current rev, or nil to re-raise.
+  true
+end
+```
+
+Field-merge example:
+
+```crystal
+db.on_conflict do |existing, attempted|
+  merged = CouchDB::Document.new
+  merged.id = existing.id
+  merged["count"] = JSON::Any.new(existing["count"].as_i + attempted["count"].as_i)
+  merged
+end
+```
+
+- A second conflict on retry propagates without re-invoking the hook (no infinite loop).
+- Raise inside the hook to propagate a custom exception.
+- Hooks apply to `put` and `remove` only; `bulk_docs` and attachment methods are unaffected.
+
 ### Attachments
 
 ```crystal
@@ -259,7 +300,6 @@ The "winning" revision is the one with the highest `seq` for a given `id`. Delet
 
 ## Out of Scope (v0.1)
 
-- Conflict resolution hooks
 - Design documents and map-reduce views
 - Filtered replication
 - TLS client certificates
