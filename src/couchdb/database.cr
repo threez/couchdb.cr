@@ -70,6 +70,21 @@ module CouchDB
       klass.from_json(@adapter.get(id).to_json)
     end
 
+    # Assigns a TLS client context used for mutual TLS (mTLS) on HTTPS connections.
+    # No-op when the underlying adapter is SQLite.
+    #
+    # ```
+    # ctx = OpenSSL::SSL::Context::Client.new
+    # ctx.certificate_file = "client.crt"
+    # ctx.private_key_file = "client.key"
+    # db.tls = ctx
+    # ```
+    def tls=(ctx : OpenSSL::SSL::Context::Client)
+      case a = @adapter
+      when Adapter::HTTP then a.tls = ctx
+      end
+    end
+
     # Register a block invoked when `put` raises Conflict.
     # Return a Document to retry (system sets the correct rev automatically).
     # Return nil to re-raise. Raise to propagate a custom exception.

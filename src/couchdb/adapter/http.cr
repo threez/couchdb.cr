@@ -1,4 +1,5 @@
 require "http/client"
+require "openssl"
 require "uri"
 require "./base"
 
@@ -18,6 +19,20 @@ module CouchDB
       @db_path : String
       @db_name : String
       @auth : String?
+      @tls : OpenSSL::SSL::Context::Client?
+
+      # Assigns a TLS client context for mutual TLS (mTLS) authentication.
+      # Applied to every outgoing HTTPS connection.
+      #
+      # ```
+      # ctx = OpenSSL::SSL::Context::Client.new
+      # ctx.certificate_file = "client.crt"
+      # ctx.private_key_file = "client.key"
+      # adapter.tls = ctx
+      # ```
+      def tls=(ctx : OpenSSL::SSL::Context::Client)
+        @tls = ctx
+      end
 
       # Parses a CouchDB URL and configures the adapter.
       # Credentials in the URL are extracted and used for Basic auth on every request.
@@ -263,7 +278,9 @@ module CouchDB
       end
 
       private def client : ::HTTP::Client
-        ::HTTP::Client.new(URI.parse(@base_url))
+        uri = URI.parse(@base_url)
+        tls = @tls
+        tls ? ::HTTP::Client.new(uri, tls: tls) : ::HTTP::Client.new(uri)
       end
 
       private def default_headers : ::HTTP::Headers

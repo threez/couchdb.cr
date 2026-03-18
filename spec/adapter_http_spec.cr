@@ -1,5 +1,6 @@
 require "base64"
 require "http/client"
+require "openssl"
 require "uri"
 require "./spec_helper"
 
@@ -42,6 +43,38 @@ end
 # ---------------------------------------------------------------------------
 # Guard — skip everything when no server is configured
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# TLS client-certificate configuration — no live server needed
+# ---------------------------------------------------------------------------
+
+describe CouchDB::Database do
+  describe "#tls=" do
+    it "accepts an OpenSSL context on an HTTPS database" do
+      db = CouchDB::Database.new("https://localhost:5984/testdb")
+      ctx = OpenSSL::SSL::Context::Client.new
+      db.tls = ctx # must not raise
+      db.adapter.as(CouchDB::Adapter::HTTP).@tls.should eq(ctx)
+    end
+
+    it "is a no-op for SQLite databases" do
+      db = CouchDB::Database.new(":memory:")
+      ctx = OpenSSL::SSL::Context::Client.new
+      db.tls = ctx # must not raise
+    end
+  end
+end
+
+describe CouchDB::Adapter::HTTP do
+  describe "#tls=" do
+    it "stores the context so subsequent clients use it" do
+      adapter = CouchDB::Adapter::HTTP.new("https://localhost:5984/testdb")
+      ctx = OpenSSL::SSL::Context::Client.new
+      adapter.tls = ctx
+      adapter.@tls.should eq(ctx)
+    end
+  end
+end
 
 if BASE_URL.empty?
   pending "Set COUCHDB_URL (e.g. http://admin:secret@localhost:7070) to run HTTP e2e tests"
