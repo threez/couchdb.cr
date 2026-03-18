@@ -218,6 +218,28 @@ else
         expect_raises(CouchDB::NotFound) { http_db.get_local("_local/http-nope") }
       end
     end
+
+    describe "#get_attachment, #put_attachment, #delete_attachment" do
+      it "stores and retrieves an attachment" do
+        db = http_db
+        rev = db.put(make_doc("http-att-doc"))[:rev]
+        data = "hello".to_slice
+        result = db.put_attachment("http-att-doc", "note.txt", rev, data, "text/plain")
+        result[:ok].should be_true
+
+        att = db.get_attachment("http-att-doc", "note.txt")
+        String.new(att[:data]).should eq("hello")
+        att[:content_type].should start_with("text/plain")
+      end
+
+      it "deletes an attachment" do
+        db = http_db
+        rev = db.put(make_doc("http-att-del"))[:rev]
+        r2 = db.put_attachment("http-att-del", "bye.txt", rev, "bye".to_slice, "text/plain")
+        db.delete_attachment("http-att-del", "bye.txt", r2[:rev])
+        expect_raises(CouchDB::NotFound) { db.get_attachment("http-att-del", "bye.txt") }
+      end
+    end
   end
 
   # -------------------------------------------------------------------------
@@ -258,6 +280,18 @@ else
 
       local.get("rep-sync-remote-doc").id.should eq("rep-sync-remote-doc")
       remote.get("rep-sync-local-doc").id.should eq("rep-sync-local-doc")
+    end
+
+    it "replicates attachments from HTTP to SQLite" do
+      remote = http_db
+      rev = remote.put(make_doc("rep-att-src"))[:rev]
+      remote.put_attachment("rep-att-src", "data.txt", rev, "replicated".to_slice, "text/plain")
+
+      local = CouchDB::Database.new(":memory:")
+      local.replicate_from(remote)
+
+      att = local.get_attachment("rep-att-src", "data.txt")
+      String.new(att[:data]).should eq("replicated")
     end
   end
 end

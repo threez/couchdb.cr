@@ -1,3 +1,4 @@
+require "base64"
 require "./spec_helper"
 
 private def tmp_db : CouchDB::Adapter::SQLite
@@ -209,6 +210,87 @@ describe CouchDB::Adapter::SQLite do
     it "raises NotFound for missing local doc" do
       db = tmp_db
       expect_raises(CouchDB::NotFound) { db.get_local("_local/nope") }
+    end
+  end
+
+  describe "#get_attachment, #put_attachment, #delete_attachment" do
+    it "stores and retrieves an attachment" do
+      db = tmp_db
+      rev = db.put(make_doc("att-doc"))[:rev]
+      data = "hello attachment".to_slice
+      result = db.put_attachment("att-doc", "readme.txt", rev, data, "text/plain")
+      result[:ok].should be_true
+
+      att = db.get_attachment("att-doc", "readme.txt")
+      att[:content_type].should eq("text/plain")
+      String.new(att[:data]).should eq("hello attachment")
+    end
+
+    it "updates _attachments stub in the document" do
+      db = tmp_db
+      rev = db.put(make_doc("att-meta"))[:rev]
+      db.put_attachment("att-meta", "file.bin", rev, Bytes[1, 2, 3], "application/octet-stream")
+      doc = db.get("att-meta")
+      stubs = doc["_attachments"].as_h
+      stubs["file.bin"]["content_type"].as_s.should eq("application/octet-stream")
+      stubs["file.bin"]["length"].as_i.should eq(3)
+    end
+
+    it "raises NotFound for missing attachment" do
+      db = tmp_db
+      db.put(make_doc("att-nope"))
+      expect_raises(CouchDB::NotFound) { db.get_attachment("att-nope", "no.txt") }
+    end
+
+    it "raises Conflict when rev is wrong" do
+      db = tmp_db
+      db.put(make_doc("att-conflict"))
+      expect_raises(CouchDB::Conflict) do
+        db.put_attachment("att-conflict", "x.txt", "0-bad", Bytes[1], "text/plain")
+      end
+    end
+
+    it "deletes an attachment" do
+      db = tmp_db
+      rev = db.put(make_doc("att-del"))[:rev]
+      r2 = db.put_attachment("att-del", "bye.txt", rev, "bye".to_slice, "text/plain")
+      db.delete_attachment("att-del", "bye.txt", r2[:rev])
+      expect_raises(CouchDB::NotFound) { db.get_attachment("att-del", "bye.txt") }
+    end
+
+    it "extracts inline attachment data from a put document" do
+      db = tmp_db
+      doc = make_doc("inline-att")
+      doc["_attachments"] = JSON::Any.new({
+        "hello.txt" => JSON::Any.new({
+          "content_type" => JSON::Any.new("text/plain"),
+          "data"         => JSON::Any.new(Base64.strict_encode("inline content")),
+          "length"       => JSON::Any.new(14_i64),
+        } of String => JSON::Any),
+      } of String => JSON::Any)
+      db.put(doc)
+
+      att = db.get_attachment("inline-att", "hello.txt")
+      String.new(att[:data]).should eq("inline content")
+      att[:content_type].should eq("text/plain")
+    end
+
+    it "stores a stub (not inline data) in the document body after extracting" do
+      db = tmp_db
+      doc = make_doc("inline-stub")
+      doc["_attachments"] = JSON::Any.new({
+        "f.bin" => JSON::Any.new({
+          "content_type" => JSON::Any.new("application/octet-stream"),
+          "data"         => JSON::Any.new(Base64.strict_encode("abc")),
+          "length"       => JSON::Any.new(3_i64),
+        } of String => JSON::Any),
+      } of String => JSON::Any)
+      db.put(doc)
+
+      stored = db.get("inline-stub")
+      stub = stored["_attachments"].as_h["f.bin"].as_h
+      stub["stub"].as_bool.should be_true
+      stub.has_key?("data").should be_false
     end
   end
 end

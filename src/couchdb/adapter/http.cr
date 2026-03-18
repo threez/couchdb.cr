@@ -149,7 +149,7 @@ module CouchDB
       def bulk_get(id_revs : Array(NamedTuple(id: String, rev: String))) : Array(Document)
         docs_param = id_revs.map { |pair| {"id" => pair[:id], "rev" => pair[:rev]} }
         payload = {"docs" => docs_param}.to_json
-        resp = post_request("#{@db_path}/_bulk_get", payload)
+        resp = post_request("#{@db_path}/_bulk_get?attachments=true", payload)
         check_response!(resp)
 
         docs = [] of Document
@@ -184,6 +184,37 @@ module CouchDB
         {ok: true, id: data["id"].as_s, rev: data["rev"].as_s}
       end
 
+      # HTTP implementation of `Adapter#get_attachment`. See `Adapter#get_attachment` for the contract.
+      def get_attachment(id : String, attname : String) : NamedTuple(data: Bytes, content_type: String)
+        resp = get_request("#{@db_path}/#{URI.encode_path(id)}/#{URI.encode_path(attname)}")
+        raise NotFound.new("#{id}/#{attname}") if resp.status_code == 404
+        check_response!(resp)
+        ct = resp.headers["Content-Type"]? || "application/octet-stream"
+        {data: resp.body.to_slice, content_type: ct}
+      end
+
+      # HTTP implementation of `Adapter#put_attachment`. See `Adapter#put_attachment` for the contract.
+      def put_attachment(id : String, attname : String, rev : String,
+                         data : Bytes, content_type : String) : NamedTuple(ok: Bool, id: String, rev: String)
+        path = "#{@db_path}/#{URI.encode_path(id)}/#{URI.encode_path(attname)}?rev=#{rev}"
+        resp = put_raw_request(path, data, content_type)
+        raise Conflict.new(id, rev) if resp.status_code == 409
+        check_response!(resp)
+        result = JSON.parse(resp.body)
+        {ok: true, id: result["id"].as_s, rev: result["rev"].as_s}
+      end
+
+      # HTTP implementation of `Adapter#delete_attachment`. See `Adapter#delete_attachment` for the contract.
+      def delete_attachment(id : String, attname : String, rev : String) : NamedTuple(ok: Bool, id: String, rev: String)
+        path = "#{@db_path}/#{URI.encode_path(id)}/#{URI.encode_path(attname)}?rev=#{rev}"
+        resp = delete_request(path)
+        raise NotFound.new("#{id}/#{attname}") if resp.status_code == 404
+        raise Conflict.new(id, rev) if resp.status_code == 409
+        check_response!(resp)
+        result = JSON.parse(resp.body)
+        {ok: true, id: result["id"].as_s, rev: result["rev"].as_s}
+      end
+
       private def get_request(path : String) : ::HTTP::Client::Response
         client.get(path, headers: default_headers)
       end
@@ -198,6 +229,12 @@ module CouchDB
 
       private def delete_request(path : String) : ::HTTP::Client::Response
         client.delete(path, headers: default_headers)
+      end
+
+      private def put_raw_request(path : String, body : Bytes, content_type : String) : ::HTTP::Client::Response
+        h = default_headers
+        h["Content-Type"] = content_type
+        client.put(path, headers: h, body: String.new(body))
       end
 
       private def client : ::HTTP::Client

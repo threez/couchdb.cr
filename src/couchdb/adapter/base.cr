@@ -73,5 +73,18 @@ module CouchDB
     #
     # The `_local/` prefix is added automatically if not already present.
     abstract def put_local(doc : Document) : NamedTuple(ok: Bool, id: String, rev: String)
+
+    # Returns the raw bytes and content-type for *attname* on document *id*.
+    # Raises `NotFound` if the document or attachment is absent.
+    abstract def get_attachment(id : String, attname : String) : NamedTuple(data: Bytes, content_type: String)
+
+    # Stores *data* as attachment *attname* on document *id* at revision *rev*.
+    # Writes a new document revision (as CouchDB does). Raises `Conflict` on rev mismatch.
+    abstract def put_attachment(id : String, attname : String, rev : String,
+                                data : Bytes, content_type : String) : NamedTuple(ok: Bool, id: String, rev: String)
+
+    # Removes attachment *attname* from document *id* at revision *rev*.
+    # Writes a new document revision. Raises `Conflict` on rev mismatch.
+    abstract def delete_attachment(id : String, attname : String, rev : String) : NamedTuple(ok: Bool, id: String, rev: String)
   end
 end

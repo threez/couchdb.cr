@@ -134,6 +134,23 @@ db.changes(since: seq, limit: 100, include_docs: true)
 db.info                                                # => {db_name:, doc_count:, update_seq:}
 ```
 
+### Attachments
+
+```crystal
+# Store a binary attachment (creates a new document revision)
+rev = db.put(doc)[:rev]
+db.put_attachment("doc-id", "photo.jpg", rev, bytes, "image/jpeg")  # => {ok:, id:, rev:}
+
+# Retrieve raw bytes
+att = db.get_attachment("doc-id", "photo.jpg")  # => {data: Bytes, content_type:}
+File.write("photo.jpg", att[:data])
+
+# Delete an attachment (creates a new document revision)
+db.delete_attachment("doc-id", "photo.jpg", att_rev)  # => {ok:, id:, rev:}
+```
+
+Attachment metadata (content type, length) is stored as a stub in the document's `_attachments` field. Binary data is stored separately (in an `attachments` SQLite table for the local adapter, or via native CouchDB attachment endpoints for the HTTP adapter).
+
 ### Replication
 
 ```crystal
@@ -208,6 +225,7 @@ Four tables underpin the local adapter:
 | `revs` | Parent-revision linkage tree |
 | `local_docs` | `_local/` documents — checkpoints, never replicated |
 | `update_seq` | Append-only sequence log; ROWID is the `update_seq` |
+| `attachments` | Current binary attachment data keyed by `(doc_id, name)` |
 
 The "winning" revision is the one with the highest `seq` for a given `id`. Deleted documents are soft-deleted (a `deleted=1` row is stored) so their revisions remain queryable for replication.
 
@@ -216,7 +234,6 @@ The "winning" revision is the one with the highest `seq` for a given `id`. Delet
 - Continuous / longpoll changes feed
 - Conflict resolution hooks
 - Design documents and map-reduce views
-- Attachment support
 - Filtered replication
 - TLS client certificates
 

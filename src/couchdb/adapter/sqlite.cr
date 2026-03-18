@@ -1,3 +1,4 @@
+require "base64"
 require "db"
 require "sqlite3"
 require "./base"
@@ -49,6 +50,14 @@ module CouchDB
           seq     INTEGER PRIMARY KEY AUTOINCREMENT,
           doc_id  TEXT NOT NULL,
           doc_rev TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS attachments (
+          doc_id       TEXT NOT NULL,
+          name         TEXT NOT NULL,
+          content_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+          data         BLOB NOT NULL,
+          PRIMARY KEY (doc_id, name)
         );
       SQL
 
@@ -345,6 +354,56 @@ module CouchDB
         {ok: true, id: full_id, rev: new_rev}
       end
 
+      # SQLite implementation of `Adapter#get_attachment`. See `Adapter#get_attachment` for the contract.
+      def get_attachment(id : String, attname : String) : NamedTuple(data: Bytes, content_type: String)
+        get(id) # raises NotFound if document missing or deleted
+        row = @db.query_one?(
+          "SELECT content_type, data FROM attachments WHERE doc_id = ? AND name = ?",
+          id, attname, as: {String, Bytes}
+        )
+        raise NotFound.new("#{id}/#{attname}") unless row
+        ct, data = row
+        {data: data, content_type: ct}
+      end
+
+      # SQLite implementation of `Adapter#put_attachment`. See `Adapter#put_attachment` for the contract.
+      def put_attachment(id : String, attname : String, rev : String,
+                         data : Bytes, content_type : String) : NamedTuple(ok: Bool, id: String, rev: String)
+        existing = get(id) # raises NotFound if missing/deleted
+        raise Conflict.new(id, rev) if existing.rev != rev
+
+        attaches = existing["_attachments"]?.try(&.as_h?) || {} of String => JSON::Any
+        attaches[attname] = JSON::Any.new({
+          "content_type" => JSON::Any.new(content_type),
+          "length"       => JSON::Any.new(data.size.to_i64),
+          "stub"         => JSON::Any.new(true),
+        } of String => JSON::Any)
+        existing["_attachments"] = JSON::Any.new(attaches)
+
+        new_rev = existing.next_rev
+        store_doc(id, new_rev, existing, deleted: false, parent_rev: rev)
+        @db.exec(
+          "INSERT OR REPLACE INTO attachments (doc_id, name, content_type, data) VALUES (?, ?, ?, ?)",
+          id, attname, content_type, data
+        )
+        {ok: true, id: id, rev: new_rev}
+      end
+
+      # SQLite implementation of `Adapter#delete_attachment`. See `Adapter#delete_attachment` for the contract.
+      def delete_attachment(id : String, attname : String, rev : String) : NamedTuple(ok: Bool, id: String, rev: String)
+        existing = get(id) # raises NotFound if missing/deleted
+        raise Conflict.new(id, rev) if existing.rev != rev
+
+        attaches = existing["_attachments"]?.try(&.as_h?) || {} of String => JSON::Any
+        attaches.delete(attname)
+        existing["_attachments"] = JSON::Any.new(attaches)
+
+        new_rev = existing.next_rev
+        store_doc(id, new_rev, existing, deleted: false, parent_rev: rev)
+        @db.exec("DELETE FROM attachments WHERE doc_id = ? AND name = ?", id, attname)
+        {ok: true, id: id, rev: new_rev}
+      end
+
       private def build_all_docs_rows(result_set : DB::ResultSet, rows : Array(JSON::Any), include_docs : Bool)
         result_set.each do
           doc_id = result_set.read(String)
@@ -430,7 +489,35 @@ module CouchDB
         row
       end
 
+      private def extract_inline_attachments(id : String, doc : Document)
+        raw = doc["_attachments"]?.try(&.as_h?) || return
+        updated = false
+
+        raw.each do |attname, meta|
+          meta_h = meta.as_h? || next
+          inline_data = meta_h["data"]?.try(&.as_s?) || next
+
+          bytes = Base64.decode(inline_data)
+          ct = meta_h["content_type"]?.try(&.as_s?) || "application/octet-stream"
+
+          @db.exec(
+            "INSERT OR REPLACE INTO attachments (doc_id, name, content_type, data) VALUES (?, ?, ?, ?)",
+            id, attname, ct, bytes
+          )
+
+          raw[attname] = JSON::Any.new({
+            "content_type" => JSON::Any.new(ct),
+            "length"       => JSON::Any.new(bytes.size.to_i64),
+            "stub"         => JSON::Any.new(true),
+          } of String => JSON::Any)
+          updated = true
+        end
+
+        doc["_attachments"] = JSON::Any.new(raw) if updated
+      end
+
       private def store_doc(id : String, rev : String, doc : Document, deleted : Bool, parent_rev : String?)
+        extract_inline_attachments(id, doc)
         # Clone to set the canonical id/rev without mutating the caller's document
         stored = Document.from_json(doc.to_json)
         stored.id = id

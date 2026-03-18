@@ -112,6 +112,24 @@ module CouchDB
       @adapter.put_local(doc)
     end
 
+    # Returns raw bytes and content-type for an attachment. Raises `NotFound` if absent.
+    def get_attachment(id : String, attname : String) : NamedTuple(data: Bytes, content_type: String)
+      @adapter.get_attachment(id, attname)
+    end
+
+    # Stores binary data as an attachment, creating a new document revision.
+    # Raises `Conflict` on rev mismatch.
+    def put_attachment(id : String, attname : String, rev : String,
+                       data : Bytes, content_type : String) : NamedTuple(ok: Bool, id: String, rev: String)
+      @adapter.put_attachment(id, attname, rev, data, content_type)
+    end
+
+    # Removes an attachment, creating a new document revision.
+    # Raises `Conflict` on rev mismatch.
+    def delete_attachment(id : String, attname : String, rev : String) : NamedTuple(ok: Bool, id: String, rev: String)
+      @adapter.delete_attachment(id, attname, rev)
+    end
+
     # Pushes local changes to *target*. Returns a `Replication::Session` with transfer stats.
     def replicate_to(target : Database) : Replication::Session
       Replication::Replicator.new(@adapter, target.adapter).replicate
