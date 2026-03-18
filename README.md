@@ -247,6 +247,76 @@ end
 
 `query` performs a full in-memory scan — it is suited for small-to-medium datasets and ad-hoc indexing. For very large databases, use `all_docs` range queries instead.
 
+### Find (Mango selectors)
+
+`find` runs an in-memory Mango-style selector query over all documents, PouchDB/CouchDB-style. Instead of a Crystal block, pass a JSON hash describing the conditions; `find` handles filtering, sorting, projection, and pagination.
+
+**Basic usage:**
+
+```crystal
+result = db.find(JSON.parse(%({"type": "note"})))
+result[:docs].each { |doc| puts doc["title"] }
+# result[:docs]    — Array(JSON::Any) of matching documents
+# result[:warning] — always present; full scan, no index used
+```
+
+**Field projection** — restrict keys returned per document:
+
+```crystal
+result = db.find(JSON.parse(%({"type": "note"})), fields: ["_id", "title", "author"])
+result[:docs].first.as_h.keys  # => ["_id", "title", "author"]
+# Dot-notation paths are stored flat: "address.city" becomes a top-level key in the result
+```
+
+**Sorting** — pass an array of field names (ascending) or single-key hashes with `"asc"`/`"desc"`:
+
+```crystal
+# Ascending (bare string)
+db.find(sel, sort: [JSON::Any.new("name")])
+
+# Descending (single-key hash)
+db.find(sel, sort: [JSON.parse(%({"score": "desc"}))])
+
+# Multi-key: primary sort by group, secondary by rank
+db.find(sel, sort: [JSON::Any.new("group"), JSON::Any.new("rank")])
+```
+
+**Pagination:**
+
+```crystal
+db.find(sel, limit: 10, skip: 20)
+```
+
+**Operator reference:**
+
+| Operator | Description | Example condition |
+|---|---|---|
+| `$eq` | Equal (default for bare values) | `{"$eq": "note"}` |
+| `$ne` | Not equal | `{"$ne": "deleted"}` |
+| `$lt` | Less than | `{"$lt": 100}` |
+| `$lte` | Less than or equal | `{"$lte": 100}` |
+| `$gt` | Greater than | `{"$gt": 0}` |
+| `$gte` | Greater than or equal | `{"$gte": 0}` |
+| `$exists` | Field presence | `{"$exists": true}` |
+| `$type` | JSON type check | `{"$type": "string"}` |
+| `$in` | Value in set | `{"$in": ["a", "b"]}` |
+| `$nin` | Value not in set | `{"$nin": ["x"]}` |
+| `$all` | Array contains all | `{"$all": ["a", "b"]}` |
+| `$size` | Array length | `{"$size": 3}` |
+| `$mod` | Integer modulo | `{"$mod": [2, 0]}` (even) |
+| `$regex` | String matches regex | `{"$regex": "^Al"}` |
+| `$elemMatch` | Array element matches sub-selector | `{"$elemMatch": {"score": {"$gt": 5}}}` |
+| `$not` | Negate field condition | `{"$not": {"$gt": 10}}` |
+| `$and` | All sub-selectors match | `{"$and": [{"a": 1}, {"b": 2}]}` |
+| `$or` | Any sub-selector matches | `{"$or": [{"type": "a"}, {"type": "b"}]}` |
+| `$nor` | No sub-selector matches | `{"$nor": [{"deleted": true}]}` |
+
+Valid `$type` values: `"null"`, `"boolean"`, `"number"`, `"string"`, `"array"`, `"object"`.
+
+Comparisons (`$lt`, `$gt`, etc.) use the same CouchDB collation order as `query` (null < false < true < numbers < strings < arrays < objects), so mixed-type fields sort predictably.
+
+> **Note:** `warning` is always present in the result because `find` always does a full scan — there is no index. The message prompts you to create an index if performance matters.
+
 ### Conflict Resolution
 
 Register a hook on a `Database` instance to handle `put` or `remove` conflicts automatically instead of rescuing `Conflict` manually.

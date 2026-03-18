@@ -287,6 +287,52 @@ module CouchDB
       {total_rows: total_rows, offset: skip, rows: rows}
     end
 
+    # Runs an in-memory Mango selector query over all documents, PouchDB/CouchDB-style.
+    #
+    # *selector* is a JSON::Any hash describing match conditions (see README for full operator
+    # reference). *fields* limits the keys returned per doc. *sort* is an array of bare field
+    # name strings (ascending) or single-key hashes with `"asc"`/`"desc"` values. *limit* and
+    # *skip* control pagination.
+    #
+    # ```
+    # result = db.find(JSON.parse(%({"type": "note"})))
+    # result[:docs].each { |doc| puts doc["title"] }
+    # result[:warning] # => always present (full scan, no index)
+    # ```
+    def find(
+      selector : JSON::Any,
+      fields : Array(String)? = nil,
+      sort : Array(JSON::Any)? = nil,
+      limit : Int32? = nil,
+      skip : Int32 = 0,
+    ) : NamedTuple(docs: Array(JSON::Any), warning: String?)
+      docs = [] of JSON::Any
+      scan_offset = 0
+      loop do
+        batch = @adapter.all_docs(true, QUERY_BATCH_SIZE, scan_offset, nil, nil)
+        break if batch[:rows].empty?
+        batch[:rows].each do |row|
+          doc_json = row["doc"]
+          docs << doc_json if match_selector?(doc_json, selector)
+        end
+        break if batch[:rows].size < QUERY_BATCH_SIZE
+        scan_offset += QUERY_BATCH_SIZE
+      end
+
+      docs = apply_find_sort(docs, sort) if sort && !sort.empty?
+
+      paged = docs[skip..]? || [] of JSON::Any
+      paged = paged.first(limit) if limit
+
+      result_docs = if (f = fields)
+                      paged.map { |doc| project_doc_fields(doc, f).as(JSON::Any) }
+                    else
+                      paged
+                    end
+
+      {docs: result_docs, warning: "no matching index found, create an index to optimize query time"}
+    end
+
     # Pushes local changes to *target*. Returns a `Replication::Session` with transfer stats.
     def replicate_to(target : Database) : Replication::Session
       Replication::Replicator.new(@adapter, target.adapter).replicate
@@ -413,6 +459,123 @@ module CouchDB
           "value" => reduce_values(fn, g.map(&.value)),
         } of String => JSON::Any)
       end
+    end
+
+    # Navigates a dot-notation path into a JSON object (e.g. "address.city").
+    # Returns nil if any segment is missing or an intermediate node is not an object.
+    private def doc_field(doc : JSON::Any, path : String) : JSON::Any?
+      path.split('.').reduce(doc.as(JSON::Any?)) do |cur, seg|
+        cur.try(&.as_h?).try(&.[seg]?)
+      end
+    end
+
+    # Returns the Mango type name for a JSON value.
+    private def json_type_name(v : JSON::Any) : String
+      case v.raw
+      when Nil            then "null"
+      when Bool           then "boolean"
+      when Int64, Float64 then "number"
+      when String         then "string"
+      when Array          then "array"
+      when Hash           then "object"
+      else                     "null"
+      end
+    end
+
+    # Top-level selector: each key is either a logical combinator ($and/$or/$nor/$not)
+    # or a field path. All conditions are implicitly ANDed.
+    # An empty selector {} matches everything.
+    private def match_selector?(doc : JSON::Any, selector : JSON::Any) : Bool
+      selector.as_h.all? do |key, condition|
+        case key
+        when "$and" then condition.as_a.all? { |s| match_selector?(doc, s) }
+        when "$or"  then condition.as_a.any? { |s| match_selector?(doc, s) }
+        when "$nor" then condition.as_a.none? { |s| match_selector?(doc, s) }
+        when "$not" then !match_selector?(doc, condition)
+        else             match_condition?(doc_field(doc, key), condition)
+        end
+      end
+    end
+
+    # Evaluates a single field's condition. Bare value = implicit $eq.
+    # A Hash with $-prefixed keys = operator map (all operators must pass).
+    private def match_condition?(field_val : JSON::Any?, condition : JSON::Any) : Bool
+      if (h = condition.as_h?) && h.any? { |k, _| k.starts_with?('$') }
+        h.all? { |op, operand| match_operator?(field_val, op, operand) }
+      else
+        compare_json_keys(field_val, condition) == 0
+      end
+    end
+
+    # Dispatches a single Mango operator against a field value.
+    private def match_operator?(field_val : JSON::Any?, op : String, operand : JSON::Any) : Bool
+      case op
+      when "$eq"     then compare_json_keys(field_val, operand) == 0
+      when "$ne"     then compare_json_keys(field_val, operand) != 0
+      when "$lt"     then !!field_val && compare_json_keys(field_val, operand) < 0
+      when "$lte"    then !!field_val && compare_json_keys(field_val, operand) <= 0
+      when "$gt"     then !!field_val && compare_json_keys(field_val, operand) > 0
+      when "$gte"    then !!field_val && compare_json_keys(field_val, operand) >= 0
+      when "$exists" then operand.as_bool ? !field_val.nil? : field_val.nil?
+      when "$type"   then !!field_val && json_type_name(field_val.not_nil!) == operand.as_s
+      when "$in"     then operand.as_a.any? { |e| compare_json_keys(field_val, e) == 0 }
+      when "$nin"    then operand.as_a.none? { |e| compare_json_keys(field_val, e) == 0 }
+      when "$not"    then !match_condition?(field_val, operand)
+      when "$all"
+        return false unless field_val && field_val.raw.is_a?(Array)
+        arr = field_val.as_a
+        operand.as_a.all? { |e| arr.any? { |item| compare_json_keys(item, e) == 0 } }
+      when "$size"
+        return false unless field_val && field_val.raw.is_a?(Array)
+        field_val.as_a.size == operand.raw.as(Int64 | Float64).to_i
+      when "$mod"
+        return false unless field_val && (field_val.raw.is_a?(Int64) || field_val.raw.is_a?(Float64))
+        divisor = operand.as_a[0].raw.as(Int64 | Float64).to_i64
+        remainder = operand.as_a[1].raw.as(Int64 | Float64).to_i64
+        field_val.raw.as(Int64 | Float64).to_i64 % divisor == remainder
+      when "$regex"
+        return false unless field_val && field_val.raw.is_a?(String)
+        Regex.new(operand.as_s).matches?(field_val.as_s)
+      when "$elemMatch"
+        return false unless field_val && field_val.raw.is_a?(Array)
+        field_val.as_a.any? { |elem| match_selector?(elem, operand) }
+      else
+        raise ArgumentError.new("Unknown operator: #{op}")
+      end
+    end
+
+    # Sorts docs by the sort spec. Each element is a bare string (asc)
+    # or a single-key hash with "asc"/"desc" value.
+    private def apply_find_sort(docs : Array(JSON::Any), sort : Array(JSON::Any)) : Array(JSON::Any)
+      sort_spec = sort.map do |item|
+        case item.raw
+        when String then {item.as_s, false}
+        when Hash
+          field, dir = item.as_h.first
+          {field, dir.as_s == "desc"}
+        else raise ArgumentError.new("Invalid sort item: #{item.inspect}")
+        end
+      end
+      docs.sort do |a, b|
+        result = 0
+        sort_spec.each do |(field, desc)|
+          cmp = compare_json_keys(doc_field(a, field), doc_field(b, field))
+          cmp = -cmp if desc
+          result = cmp
+          break unless result == 0
+        end
+        result
+      end
+    end
+
+    # Projects a doc to only the listed field names (dot-notation stored flat).
+    private def project_doc_fields(doc : JSON::Any, fields : Array(String)) : JSON::Any
+      h = {} of String => JSON::Any
+      fields.each do |f|
+        val = doc_field(doc, f)
+        h[f] = val if val
+      end
+      JSON::Any.new(h)
     end
   end
 end
