@@ -168,6 +168,85 @@ end
 **SQLite**: polls `update_seq` in a loop, sleeping `heartbeat` ms between polls.
 **HTTP**: opens a `feed=continuous` connection to CouchDB and reads the response body line by line.
 
+### Query (map/reduce)
+
+`query` runs an in-memory map/reduce over all documents, PouchDB-style. Pass a block that calls `emit` for each key/value pair you want in the result; rows are sorted by key using CouchDB collation order (null < false < true < numbers < strings < arrays < objects).
+
+**Basic emit:**
+
+```crystal
+result = db.query do |doc, emit|
+  emit.call(JSON::Any.new(doc["type"].as_s), JSON::Any.new(1_i64))
+end
+result[:rows].each { |r| puts "#{r["key"]} → #{r["value"]}" }
+# result[:total_rows]  — total after filtering, before skip/limit
+# result[:offset]      — the skip value used
+```
+
+**Key filtering:**
+
+```crystal
+# Exact key
+db.query(key: JSON::Any.new("note")) { |doc, emit| ... }
+
+# Multiple exact keys
+db.query(keys: [JSON::Any.new("note"), JSON::Any.new("task")]) { |doc, emit| ... }
+
+# Inclusive range
+db.query(startkey: JSON::Any.new("b"), endkey: JSON::Any.new("d")) { |doc, emit| ... }
+```
+
+**Pagination and ordering:**
+
+```crystal
+db.query(limit: 10, skip: 20)             { |doc, emit| ... }
+db.query(descending: true)                { |doc, emit| ... }
+
+# descending with bounds — pass the higher key as startkey:
+db.query(descending: true, startkey: JSON::Any.new("z"), endkey: JSON::Any.new("a")) { |doc, emit| ... }
+```
+
+**Embedding full documents:**
+
+```crystal
+result = db.query(include_docs: true) do |doc, emit|
+  emit.call(JSON::Any.new(doc["type"].as_s), JSON::Any.new(nil))
+end
+result[:rows].each { |r| puts r["doc"]["title"] }
+```
+
+**Reduce functions:**
+
+```crystal
+# _count — total number of emitted rows
+db.query(reduce: "_count") { |doc, emit| emit.call(..., ...) }
+# => [{key: null, value: 42}]
+
+# _count with grouping — one row per key
+db.query(reduce: "_count", group: true) { |doc, emit| emit.call(JSON::Any.new(doc["type"].as_s), ...) }
+# => [{key: "note", value: 10}, {key: "task", value: 5}]
+
+# _sum — sums numeric values (raises ArgumentError on non-numeric)
+db.query(reduce: "_sum") { |doc, emit| emit.call(JSON::Any.new(nil), JSON::Any.new(doc["score"].as_i64)) }
+
+# _stats — returns sum/count/min/max/sumsq (raises ArgumentError on non-numeric)
+db.query(reduce: "_stats") { |doc, emit| emit.call(JSON::Any.new(nil), JSON::Any.new(doc["score"].as_i64)) }
+# => [{key: null, value: {sum: 60.0, count: 3, min: 2.0, max: 30.0, sumsq: 1400.0}}]
+```
+
+**group_level with array keys** — truncates composite keys to the first N elements before grouping:
+
+```crystal
+# Emit [year, month] keys, then group by year only
+db.query(reduce: "_count", group_level: 1) do |doc, emit|
+  key = JSON::Any.new([JSON::Any.new(doc["year"].as_i64), JSON::Any.new(doc["month"].as_i64)])
+  emit.call(key, JSON::Any.new(nil))
+end
+# => [{key: [2024], value: 12}, {key: [2025], value: 3}]
+```
+
+`query` performs a full in-memory scan — it is suited for small-to-medium datasets and ad-hoc indexing. For very large databases, use `all_docs` range queries instead.
+
 ### Conflict Resolution
 
 Register a hook on a `Database` instance to handle `put` or `remove` conflicts automatically instead of rescuing `Conflict` manually.
@@ -306,7 +385,6 @@ The "winning" revision is the one with the highest `seq` for a given `id`. Delet
 
 ## Out of Scope (v0.1)
 
-- Design documents and map-reduce views
 - Filtered replication
 - TLS client certificates
 
