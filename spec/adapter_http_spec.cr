@@ -211,7 +211,7 @@ else
     end
 
     describe "#changes_feed" do
-      it "streams changes via feed=continuous" do
+      it "yields pre-existing changes and stops on break" do
         db = http_db
         baseline = db.changes(since: "0")[:last_seq]
         db.put(make_doc("http-feed-a"))

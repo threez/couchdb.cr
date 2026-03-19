@@ -1,3 +1,4 @@
+require "base64"
 require "http/client"
 require "openssl"
 require "uri"
@@ -151,27 +152,21 @@ module CouchDB
       end
 
       # HTTP implementation of `Adapter#changes_feed`. See `Adapter#changes_feed` for the contract.
+      #
+      # Implemented as a polling loop over the normal `_changes` endpoint so that it
+      # works with CouchDB deployments behind proxies that do not support long-lived
+      # streaming connections. `heartbeat` controls the sleep interval between polls.
       def changes_feed(since : String = "0", heartbeat : Int32 = 1000,
                        include_docs : Bool = false, & : JSON::Any -> _)
-        params = "feed=continuous&since=#{since}&heartbeat=#{heartbeat}&include_docs=#{include_docs}"
-        path = "#{@db_path}/_changes?#{params}"
-
-        http = client
-        http.exec("GET", path, headers: default_headers) do |resp|
-          raise Error.new("HTTP #{resp.status_code}: #{resp.body_io.gets_to_end}") unless resp.status_code == 200
-
-          resp.body_io.each_line do |line|
-            stripped = line.strip
-            next if stripped.empty?
-
-            begin
-              parsed = JSON.parse(stripped)
-              next unless parsed["seq"]?
-              yield parsed
-            rescue JSON::ParseException
-              next
-            end
+        current_seq = since
+        loop do
+          result = changes(since: current_seq, include_docs: include_docs)
+          result[:results].each do |change|
+            yield change
+            current_seq = change["seq"]?.try(&.as_s?) || result[:last_seq]
           end
+          current_seq = result[:last_seq]
+          sleep heartbeat.milliseconds
         end
       end
 
@@ -201,7 +196,10 @@ module CouchDB
         results.each do |result|
           (result["docs"]?.try(&.as_a?) || [] of JSON::Any).each do |item|
             ok = item["ok"]?
-            docs << Document.from_json(ok.to_json) if ok
+            next unless ok
+            doc = Document.from_json(ok.to_json)
+            inline_attachment_stubs(doc)
+            docs << doc
           end
         end
         docs
@@ -257,6 +255,31 @@ module CouchDB
         check_response!(resp)
         result = JSON.parse(resp.body)
         {ok: true, id: result["id"].as_s, rev: result["rev"].as_s}
+      end
+
+      # Fetches and inlines any attachment stubs that were not filled in by _bulk_get.
+      # Some CouchDB deployments ignore the ?attachments=true parameter; this ensures
+      # the returned document always carries full inline data for every attachment.
+      private def inline_attachment_stubs(doc : Document)
+        attachments = doc["_attachments"]?.try(&.as_h?) || return
+        updated = false
+        attachments.each do |attname, meta|
+          meta_h = meta.as_h? || next
+          next if meta_h["data"]?                     # already inlined
+          next unless meta_h["stub"]?.try(&.as_bool?) # not a stub
+          begin
+            att = get_attachment(doc.id, attname)
+            attachments[attname] = JSON::Any.new({
+              "content_type" => JSON::Any.new(att[:content_type]),
+              "data"         => JSON::Any.new(Base64.strict_encode(att[:data])),
+              "length"       => JSON::Any.new(att[:data].size.to_i64),
+            } of String => JSON::Any)
+            updated = true
+          rescue NotFound
+            next
+          end
+        end
+        doc["_attachments"] = JSON::Any.new(attachments) if updated
       end
 
       private def get_request(path : String) : ::HTTP::Client::Response
