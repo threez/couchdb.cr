@@ -96,10 +96,11 @@ module CouchDB
         resp = get_request(@db_path)
         check_response!(resp)
         data = JSON.parse(resp.body)
+        db_name = data["db_name"]?.try(&.as_s?) || @db_name
         doc_count = data["doc_count"]?.try(&.as_i64?) || 0_i64
         update_seq = data["update_seq"]?.try(&.as_i64?) ||
                      data["update_seq"]?.try(&.as_s?.try(&.to_i64?)) || 0_i64
-        {db_name: @db_name, doc_count: doc_count, update_seq: update_seq}
+        {db_name: db_name, doc_count: doc_count, update_seq: update_seq}
       end
 
       # HTTP implementation of `Adapter#get`. See `Adapter#get` for the contract.
