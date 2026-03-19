@@ -185,61 +185,9 @@ module CouchDB
         limit_val = limit || -1
         rows = [] of JSON::Any
 
-        if startkey.nil? && endkey.nil?
-          sql = <<-SQL
-            SELECT d.id, d.rev, d.body
-            FROM docs d
-            INNER JOIN (
-              SELECT id, MAX(seq) AS max_seq FROM docs WHERE deleted = 0 GROUP BY id
-            ) w ON d.id = w.id AND d.seq = w.max_seq
-            ORDER BY d.id
-            LIMIT ? OFFSET ?
-          SQL
-          @db.query(sql, limit_val, skip) do |result_set|
-            build_all_docs_rows(result_set, rows, include_docs)
-          end
-        elsif startkey && endkey
-          sql = <<-SQL
-            SELECT d.id, d.rev, d.body
-            FROM docs d
-            INNER JOIN (
-              SELECT id, MAX(seq) AS max_seq FROM docs WHERE deleted = 0 GROUP BY id
-            ) w ON d.id = w.id AND d.seq = w.max_seq
-            WHERE d.id >= ? AND d.id <= ?
-            ORDER BY d.id
-            LIMIT ? OFFSET ?
-          SQL
-          @db.query(sql, startkey, endkey, limit_val, skip) do |result_set|
-            build_all_docs_rows(result_set, rows, include_docs)
-          end
-        elsif startkey
-          sql = <<-SQL
-            SELECT d.id, d.rev, d.body
-            FROM docs d
-            INNER JOIN (
-              SELECT id, MAX(seq) AS max_seq FROM docs WHERE deleted = 0 GROUP BY id
-            ) w ON d.id = w.id AND d.seq = w.max_seq
-            WHERE d.id >= ?
-            ORDER BY d.id
-            LIMIT ? OFFSET ?
-          SQL
-          @db.query(sql, startkey, limit_val, skip) do |result_set|
-            build_all_docs_rows(result_set, rows, include_docs)
-          end
-        else
-          sql = <<-SQL
-            SELECT d.id, d.rev, d.body
-            FROM docs d
-            INNER JOIN (
-              SELECT id, MAX(seq) AS max_seq FROM docs WHERE deleted = 0 GROUP BY id
-            ) w ON d.id = w.id AND d.seq = w.max_seq
-            WHERE d.id <= ?
-            ORDER BY d.id
-            LIMIT ? OFFSET ?
-          SQL
-          @db.query(sql, endkey, limit_val, skip) do |result_set|
-            build_all_docs_rows(result_set, rows, include_docs)
-          end
+        sql, key_params = all_docs_sql(startkey, endkey)
+        @db.query(sql, args: key_params + [limit_val, skip] of DB::Any) do |result_set|
+          build_all_docs_rows(result_set, rows, include_docs)
         end
 
         {total_rows: total, offset: skip, rows: rows}
@@ -273,17 +221,7 @@ module CouchDB
             body = result_set.read(String)
 
             last_seq = seq
-
-            change = {
-              "seq"     => JSON::Any.new(seq.to_s),
-              "id"      => JSON::Any.new(doc_id),
-              "changes" => JSON::Any.new([JSON::Any.new({"rev" => JSON::Any.new(doc_rev)} of String => JSON::Any)] of JSON::Any),
-            } of String => JSON::Any
-
-            change["deleted"] = JSON::Any.new(true) if deleted
-            change["doc"] = JSON.parse(body) if include_docs
-
-            results << JSON::Any.new(change)
+            results << build_change_json(seq, doc_id, doc_rev, deleted, body, include_docs)
           end
         end
 
@@ -313,17 +251,7 @@ module CouchDB
               body = result_set.read(String)
 
               current_seq = seq
-
-              change = {
-                "seq"     => JSON::Any.new(seq.to_s),
-                "id"      => JSON::Any.new(doc_id),
-                "changes" => JSON::Any.new([JSON::Any.new({"rev" => JSON::Any.new(doc_rev)} of String => JSON::Any)] of JSON::Any),
-              } of String => JSON::Any
-
-              change["deleted"] = JSON::Any.new(true) if deleted
-              change["doc"] = JSON.parse(body) if include_docs
-
-              yield JSON::Any.new(change)
+              yield build_change_json(seq, doc_id, doc_rev, deleted, body, include_docs)
             end
           end
 
@@ -443,6 +371,44 @@ module CouchDB
         store_doc(id, new_rev, existing, deleted: false, parent_rev: rev)
         @db.exec("DELETE FROM attachments WHERE doc_id = ? AND name = ?", id, attname)
         {ok: true, id: id, rev: new_rev}
+      end
+
+      private def all_docs_sql(startkey : String?, endkey : String?) : {String, Array(DB::Any)}
+        conditions = [] of String
+        params = [] of DB::Any
+        if startkey
+          conditions << "d.id >= ?"
+          params << startkey
+        end
+        if endkey
+          conditions << "d.id <= ?"
+          params << endkey
+        end
+        where = conditions.empty? ? "" : "WHERE #{conditions.join(" AND ")}"
+        sql = <<-SQL
+          SELECT d.id, d.rev, d.body
+          FROM docs d
+          INNER JOIN (
+            SELECT id, MAX(seq) AS max_seq FROM docs WHERE deleted = 0 GROUP BY id
+          ) w ON d.id = w.id AND d.seq = w.max_seq
+          #{where}
+          ORDER BY d.id
+          LIMIT ? OFFSET ?
+        SQL
+        {sql, params}
+      end
+
+      private def build_change_json(seq : Int64, doc_id : String, doc_rev : String,
+                                    deleted : Bool, body : String,
+                                    include_docs : Bool) : JSON::Any
+        entry = {
+          "seq"     => JSON::Any.new(seq.to_s),
+          "id"      => JSON::Any.new(doc_id),
+          "changes" => JSON::Any.new([JSON::Any.new({"rev" => JSON::Any.new(doc_rev)} of String => JSON::Any)] of JSON::Any),
+        } of String => JSON::Any
+        entry["deleted"] = JSON::Any.new(true) if deleted
+        entry["doc"] = JSON.parse(body) if include_docs
+        JSON::Any.new(entry)
       end
 
       private def build_all_docs_rows(result_set : DB::ResultSet, rows : Array(JSON::Any), include_docs : Bool)

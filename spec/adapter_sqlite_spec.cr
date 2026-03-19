@@ -239,6 +239,37 @@ describe CouchDB::Adapter::SQLite do
     end
   end
 
+  describe "#close" do
+    it "releases the database handle" do
+      db = CouchDB::Adapter::SQLite.new(":memory:")
+      db.put(make_doc("x"))
+      db.close
+      expect_raises(Exception) { db.get("x") }
+    end
+  end
+
+  describe "#bulk_get edge cases" do
+    it "returns empty array for empty input" do
+      db = tmp_db
+      db.bulk_get([] of NamedTuple(id: String, rev: String)).should be_empty
+    end
+
+    it "silently skips unknown id/rev pairs" do
+      db = tmp_db
+      result = db.put(make_doc("known"))
+      docs = db.bulk_get([{id: "known", rev: result[:rev]}, {id: "ghost", rev: "1-abc"}])
+      docs.size.should eq(1)
+      docs.first.id.should eq("known")
+    end
+  end
+
+  describe "#revs_diff edge cases" do
+    it "returns empty hash with empty input" do
+      db = tmp_db
+      db.revs_diff({} of String => Array(String)).should be_empty
+    end
+  end
+
   describe "#get_local and #put_local" do
     it "stores and retrieves local docs" do
       db = tmp_db

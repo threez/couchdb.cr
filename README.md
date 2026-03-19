@@ -453,11 +453,6 @@ Four tables underpin the local adapter:
 
 The "winning" revision is the one with the highest `seq` for a given `id`. Deleted documents are soft-deleted (a `deleted=1` row is stored) so their revisions remain queryable for replication.
 
-## Out of Scope (v0.1)
-
-- Filtered replication
-- TLS client certificates
-
 ## Development
 
 ```bash

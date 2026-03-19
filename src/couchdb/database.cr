@@ -20,8 +20,14 @@ module CouchDB
 
     @adapter : Adapter::HTTP | Adapter::SQLite
 
+    # Returns the underlying adapter (SQLite or HTTP).
     def adapter : Adapter
       @adapter
+    end
+
+    # Releases the underlying adapter's connection or database handle.
+    def close
+      @adapter.close
     end
 
     # Resolver for `put` conflicts: receives (existing, attempted), returns a Document
@@ -584,10 +590,10 @@ module CouchDB
       case op
       when "$eq"  then compare_json_keys(field_val, operand) == 0
       when "$ne"  then compare_json_keys(field_val, operand) != 0
-      when "$lt"  then !!field_val && compare_json_keys(field_val, operand) < 0
-      when "$lte" then !!field_val && compare_json_keys(field_val, operand) <= 0
-      when "$gt"  then !!field_val && compare_json_keys(field_val, operand) > 0
-      else             !!field_val && compare_json_keys(field_val, operand) >= 0 # $gte
+      when "$lt"  then !field_val.nil? && compare_json_keys(field_val, operand) < 0
+      when "$lte" then !field_val.nil? && compare_json_keys(field_val, operand) <= 0
+      when "$gt"  then !field_val.nil? && compare_json_keys(field_val, operand) > 0
+      else             !field_val.nil? && compare_json_keys(field_val, operand) >= 0 # $gte
       end
     end
 

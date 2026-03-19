@@ -7,6 +7,12 @@ module CouchDB
   # Users interact with `CouchDB::Database`, which wraps an adapter and delegates
   # all operations to it. Adapters are not instantiated directly in normal usage.
   module Adapter
+    # Releases the underlying connection or database handle.
+    #
+    # For `Adapter::SQLite` this closes the connection pool. For `Adapter::HTTP` this
+    # is a no-op (connections are request-scoped). `Database` delegates this when called.
+    abstract def close
+
     # Returns database metadata: name, live document count, and latest update sequence.
     abstract def info : NamedTuple(db_name: String, doc_count: Int64, update_seq: Int64)
 

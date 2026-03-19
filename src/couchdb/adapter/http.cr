@@ -47,6 +47,10 @@ module CouchDB
                 end
       end
 
+      # No-op: HTTP connections are request-scoped and have no persistent handle to close.
+      def close
+      end
+
       # HTTP implementation of `Adapter#info`. See `Adapter#info` for the contract.
       def info : NamedTuple(db_name: String, doc_count: Int64, update_seq: Int64)
         resp = get_request(@db_path)
