@@ -12,5 +12,5 @@ require "./couchdb/replication/replicator"
 require "./couchdb/database"
 
 module CouchDB
-  VERSION = "0.1.0"
+  VERSION = "0.1.1"
 end
