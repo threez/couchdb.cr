@@ -104,3 +104,102 @@ describe CouchDB::Database do
     remote.get("local_doc").id.should eq("local_doc")
   end
 end
+
+describe "filtered replication" do
+  it "replicates only the listed doc_ids" do
+    source = CouchDB::Database.new(":memory:")
+    target = CouchDB::Database.new(":memory:")
+
+    source.put(make_doc("keep", msg: "yes"))
+    source.put(make_doc("skip", msg: "no"))
+
+    session = source.replicate_to(target, doc_ids: ["keep"])
+    session.ok?.should be_true
+    session.docs_written.should eq(1)
+    target.get("keep")["msg"].as_s.should eq("yes")
+    expect_raises(CouchDB::NotFound) { target.get("skip") }
+  end
+
+  it "skips docs not in doc_ids" do
+    source = CouchDB::Database.new(":memory:")
+    target = CouchDB::Database.new(":memory:")
+
+    source.put(make_doc("a", val: "1"))
+    source.put(make_doc("b", val: "2"))
+    source.put(make_doc("c", val: "3"))
+
+    source.replicate_to(target, doc_ids: ["a", "c"])
+    target.get("a").id.should eq("a")
+    target.get("c").id.should eq("c")
+    expect_raises(CouchDB::NotFound) { target.get("b") }
+  end
+
+  it "replicates only docs passing the filter proc" do
+    source = CouchDB::Database.new(":memory:")
+    target = CouchDB::Database.new(":memory:")
+
+    source.put(make_doc("p1", score: 10_i64))
+    source.put(make_doc("p2", score: 5_i64))
+    source.put(make_doc("p3", score: 8_i64))
+
+    filter = ->(doc : CouchDB::Document) {
+      score = doc["score"]?.try(&.as_i64?) || 0_i64
+      score >= 8
+    }
+    source.replicate_to(target, filter: filter)
+    target.get("p1").id.should eq("p1")
+    target.get("p3").id.should eq("p3")
+    expect_raises(CouchDB::NotFound) { target.get("p2") }
+  end
+
+  it "skips docs that fail the filter proc" do
+    source = CouchDB::Database.new(":memory:")
+    target = CouchDB::Database.new(":memory:")
+
+    source.put(make_doc("x", active: true))
+    source.put(make_doc("y", active: false))
+
+    filter = ->(doc : CouchDB::Document) {
+      doc["active"]?.try(&.as_bool?) == true
+    }
+    session = source.replicate_to(target, filter: filter)
+    session.docs_written.should eq(1)
+    target.get("x").id.should eq("x")
+    expect_raises(CouchDB::NotFound) { target.get("y") }
+  end
+
+  it "replicates only docs matching the selector" do
+    source = CouchDB::Database.new(":memory:")
+    target = CouchDB::Database.new(":memory:")
+
+    source.put(make_doc("m1", type: "note"))
+    source.put(make_doc("m2", type: "task"))
+    source.put(make_doc("m3", type: "note"))
+
+    selector = JSON.parse(%({"type": "note"}))
+    source.replicate_to(target, selector: selector)
+    target.get("m1").id.should eq("m1")
+    target.get("m3").id.should eq("m3")
+    expect_raises(CouchDB::NotFound) { target.get("m2") }
+  end
+
+  it "composes doc_ids with filter proc" do
+    source = CouchDB::Database.new(":memory:")
+    target = CouchDB::Database.new(":memory:")
+
+    source.put(make_doc("d1", score: 10_i64))
+    source.put(make_doc("d2", score: 10_i64))
+    source.put(make_doc("d3", score: 1_i64))
+
+    filter = ->(doc : CouchDB::Document) {
+      score = doc["score"]?.try(&.as_i64?) || 0_i64
+      score >= 8
+    }
+    # doc_ids restricts to d1+d2, filter further restricts to score >= 8
+    # d3 excluded by doc_ids, d2 included by both, d1 included by both
+    source.replicate_to(target, doc_ids: ["d1", "d2"], filter: filter)
+    target.get("d1").id.should eq("d1")
+    target.get("d2").id.should eq("d2")
+    expect_raises(CouchDB::NotFound) { target.get("d3") }
+  end
+end

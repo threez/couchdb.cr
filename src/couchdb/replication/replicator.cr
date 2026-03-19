@@ -21,7 +21,20 @@ module CouchDB
     # 7. Write checkpoint to both source and target
     class Replicator
       # Creates a replicator that will copy documents from *source* to *target*.
-      def initialize(@source : Adapter, @target : Adapter)
+      #
+      # *doc_ids* limits replication to a specific set of document IDs (applied
+      # before `revs_diff` to avoid unnecessary network calls).
+      #
+      # *filter* is an arbitrary predicate applied after `bulk_get`; only documents
+      # for which it returns `true` are written to the target.
+      #
+      # Both options are composable: set both to filter by ID *and* by content.
+      def initialize(
+        @source : Adapter,
+        @target : Adapter,
+        @doc_ids : Array(String)? = nil,
+        @filter : Proc(Document, Bool)? = nil,
+      )
       end
 
       # Runs the full replication loop and returns a `Session` with transfer statistics.
@@ -48,15 +61,7 @@ module CouchDB
 
           break if results.empty?
 
-          # Build id → revs map from changes
-          id_revs = {} of String => Array(String)
-          results.each do |change|
-            id = change["id"]?.try(&.as_s?) || next
-            revs = change["changes"]?.try(&.as_a?).try(&.map { |entry|
-              entry["rev"]?.try(&.as_s?) || ""
-            }.reject(&.empty?)) || [] of String
-            id_revs[id] = revs
-          end
+          id_revs = build_id_revs(results)
 
           # Step 5: revs_diff — only missing revisions
           missing = @target.revs_diff(id_revs)
@@ -66,24 +71,13 @@ module CouchDB
           failures = 0
 
           unless missing.empty?
-            # Step 6: Fetch from source and upload to target
-            pairs = missing.flat_map do |id, info|
-              info[:missing].map { |rev| {id: id, rev: rev} }
-            end
-
+            pairs = missing.flat_map { |id, info| info[:missing].map { |rev| {id: id, rev: rev} } }
             fetched = @source.bulk_get(pairs)
-            docs_read = fetched.size
-
-            unless fetched.empty?
-              write_results = @target.bulk_docs(fetched, new_edits: false)
-              write_results.each do |write_result|
-                if write_result[:ok]
-                  docs_written += 1
-                else
-                  failures += 1
-                end
-              end
+            if proc = @filter
+              fetched = fetched.select { |doc| proc.call(doc) }
             end
+            docs_read = fetched.size
+            docs_written, failures = write_docs(fetched) unless fetched.empty?
           end
 
           session.record_batch(docs_read, docs_written, failures, last_seq)
@@ -103,6 +97,32 @@ module CouchDB
         session = Session.new(@source.info[:db_name], @target.info[:db_name]) rescue Session.new("source", "target")
         session.fail!(ex.message || "unknown error")
         session
+      end
+
+      private def build_id_revs(results : Array(JSON::Any)) : Hash(String, Array(String))
+        id_revs = {} of String => Array(String)
+        results.each do |change|
+          id = change["id"]?.try(&.as_s?) || next
+          next if (ids = @doc_ids) && !ids.includes?(id)
+          revs = change["changes"]?.try(&.as_a?).try(&.map { |entry|
+            entry["rev"]?.try(&.as_s?) || ""
+          }.reject(&.empty?)) || [] of String
+          id_revs[id] = revs
+        end
+        id_revs
+      end
+
+      private def write_docs(docs : Array(Document)) : {Int32, Int32}
+        written = 0
+        failures = 0
+        @target.bulk_docs(docs, new_edits: false).each do |result|
+          if result[:ok]
+            written += 1
+          else
+            failures += 1
+          end
+        end
+        {written, failures}
       end
     end
   end

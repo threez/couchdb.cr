@@ -345,20 +345,52 @@ module CouchDB
     end
 
     # Pushes local changes to *target*. Returns a `Replication::Session` with transfer stats.
-    def replicate_to(target : Database) : Replication::Session
-      Replication::Replicator.new(@adapter, target.adapter).replicate
+    #
+    # Pass *doc_ids* to replicate only specific documents by ID.
+    # Pass *selector* (a Mango selector as `JSON::Any`) to filter by document content.
+    # Pass *filter* for an ad-hoc `Proc(Document, Bool)` predicate.
+    # *selector* and *filter* are mutually exclusive; *filter* takes precedence.
+    def replicate_to(
+      target : Database,
+      doc_ids : Array(String)? = nil,
+      selector : JSON::Any? = nil,
+      filter : Proc(Document, Bool)? = nil,
+    ) : Replication::Session
+      proc = filter || selector_to_filter(selector)
+      Replication::Replicator.new(@adapter, target.adapter, doc_ids, proc).replicate
     end
 
     # Pulls changes from *source* into this database. Returns a `Replication::Session`.
-    def replicate_from(source : Database) : Replication::Session
-      Replication::Replicator.new(source.adapter, @adapter).replicate
+    #
+    # Pass *doc_ids* to replicate only specific documents by ID.
+    # Pass *selector* (a Mango selector as `JSON::Any`) to filter by document content.
+    # Pass *filter* for an ad-hoc `Proc(Document, Bool)` predicate.
+    def replicate_from(
+      source : Database,
+      doc_ids : Array(String)? = nil,
+      selector : JSON::Any? = nil,
+      filter : Proc(Document, Bool)? = nil,
+    ) : Replication::Session
+      proc = filter || selector_to_filter(selector)
+      Replication::Replicator.new(source.adapter, @adapter, doc_ids, proc).replicate
     end
 
     # Bidirectional sync: pulls from *remote* then pushes to *remote*.
     # Equivalent to `replicate_from(remote)` followed by `replicate_to(remote)`.
-    def sync(remote : Database)
-      replicate_from(remote)
-      replicate_to(remote)
+    # Accepts the same *doc_ids*, *selector*, and *filter* options as `replicate_to`/`replicate_from`.
+    def sync(
+      remote : Database,
+      doc_ids : Array(String)? = nil,
+      selector : JSON::Any? = nil,
+      filter : Proc(Document, Bool)? = nil,
+    )
+      replicate_from(remote, doc_ids: doc_ids, selector: selector, filter: filter)
+      replicate_to(remote, doc_ids: doc_ids, selector: selector, filter: filter)
+    end
+
+    private def selector_to_filter(sel : JSON::Any?) : Proc(Document, Bool)?
+      return nil unless sel
+      ->(doc : Document) { match_selector?(JSON.parse(doc.to_json), sel) }
     end
 
     QUERY_BATCH_SIZE = 1000
