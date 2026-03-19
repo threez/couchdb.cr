@@ -117,14 +117,14 @@ module CouchDB
     # Registers a before-request interceptor on the HTTP adapter. No-op for SQLite.
     def on_request(&block : ::HTTP::Request -> Nil)
       case a = @adapter
-      when Adapter::HTTP then a.on_request(&block)
+      when Adapter::HTTP then a.on_request { |req| block.call(req) }
       end
     end
 
     # Registers an after-response interceptor on the HTTP adapter. No-op for SQLite.
     def on_response(&block : ::HTTP::Client::Response -> ::HTTP::Client::Response)
       case a = @adapter
-      when Adapter::HTTP then a.on_response(&block)
+      when Adapter::HTTP then a.on_response { |resp| block.call(resp) }
       end
     end
 

@@ -430,7 +430,12 @@ else
       db = CouchDB::Database.new(http_url)
       db.on_request { |req| captured = req.headers["Authorization"]? || "" }
       db.bearer_token = "test-bearer-xyz"
-      db.info
+      # Fake token → 401; the interceptor has already captured the header before
+      # check_response! raises, so we just rescue and assert the captured value.
+      begin
+        db.info
+      rescue CouchDB::Unauthorized
+      end
       captured.should eq("Bearer test-bearer-xyz")
     end
   end
