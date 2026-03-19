@@ -324,11 +324,7 @@ module CouchDB
       private def execute(request : ::HTTP::Request) : ::HTTP::Client::Response
         @request_interceptor.try(&.call(request))
         resp = client.exec(request)
-        if interceptor = @response_interceptor
-          interceptor.call(resp)
-        else
-          resp
-        end
+        @response_interceptor.try(&.call(resp)) || resp
       end
 
       private def get_request(path : String) : ::HTTP::Client::Response
