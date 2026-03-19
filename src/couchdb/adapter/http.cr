@@ -22,6 +22,14 @@ module CouchDB
       @auth : String?
       @tls : OpenSSL::SSL::Context::Client?
 
+      # Receives the outgoing request; mutate req.headers in place, return value ignored.
+      alias RequestInterceptor = Proc(::HTTP::Request, Nil)
+      # Receives the response; return the same or a replacement response.
+      alias ResponseInterceptor = Proc(::HTTP::Client::Response, ::HTTP::Client::Response)
+
+      @request_interceptor : RequestInterceptor? = nil
+      @response_interceptor : ResponseInterceptor? = nil
+
       # Assigns a TLS client context for mutual TLS (mTLS) authentication.
       # Applied to every outgoing HTTPS connection.
       #
@@ -33,6 +41,37 @@ module CouchDB
       # ```
       def tls=(ctx : OpenSSL::SSL::Context::Client)
         @tls = ctx
+      end
+
+      # Sets Bearer token authentication, replacing any previously configured credentials.
+      # Equivalent in structure to Basic credentials derived from the URL.
+      def bearer_token=(token : String)
+        @auth = "Bearer #{token}"
+      end
+
+      # Registers a block called before every HTTP request. `req.headers` is mutable.
+      # The block must return nil (end with a non-value expression or explicit `nil`).
+      def on_request(&block : ::HTTP::Request -> Nil)
+        @request_interceptor = block
+      end
+
+      # Registers a block called after every HTTP response.
+      # Return the received response unchanged, or a new one to replace it.
+      def on_response(&block : ::HTTP::Client::Response -> ::HTTP::Client::Response)
+        @response_interceptor = block
+      end
+
+      # Named constructor for Bearer-token-authenticated databases.
+      # Equivalent to constructing with `new` and calling `bearer_token=`.
+      #
+      # ```
+      # adapter = CouchDB::Adapter::HTTP.bearer("https://db.example.com/mydb", token: "secret")
+      # db = CouchDB::Database.new(adapter)
+      # ```
+      def self.bearer(url : String, token : String) : self
+        adapter = new(url)
+        adapter.bearer_token = token
+        adapter
       end
 
       # Parses a CouchDB URL and configures the adapter.
@@ -282,26 +321,36 @@ module CouchDB
         doc["_attachments"] = JSON::Any.new(attachments) if updated
       end
 
+      private def execute(request : ::HTTP::Request) : ::HTTP::Client::Response
+        @request_interceptor.try(&.call(request))
+        resp = client.exec(request)
+        if interceptor = @response_interceptor
+          interceptor.call(resp)
+        else
+          resp
+        end
+      end
+
       private def get_request(path : String) : ::HTTP::Client::Response
-        client.get(path, headers: default_headers)
+        execute(::HTTP::Request.new("GET", path, default_headers))
       end
 
       private def put_request(path : String, body : String) : ::HTTP::Client::Response
-        client.put(path, headers: json_headers, body: body)
+        execute(::HTTP::Request.new("PUT", path, json_headers, body))
       end
 
       private def post_request(path : String, body : String) : ::HTTP::Client::Response
-        client.post(path, headers: json_headers, body: body)
+        execute(::HTTP::Request.new("POST", path, json_headers, body))
       end
 
       private def delete_request(path : String) : ::HTTP::Client::Response
-        client.delete(path, headers: default_headers)
+        execute(::HTTP::Request.new("DELETE", path, default_headers))
       end
 
       private def put_raw_request(path : String, body : Bytes, content_type : String) : ::HTTP::Client::Response
         h = default_headers
         h["Content-Type"] = content_type
-        client.put(path, headers: h, body: String.new(body))
+        execute(::HTTP::Request.new("PUT", path, h, String.new(body)))
       end
 
       private def client : ::HTTP::Client

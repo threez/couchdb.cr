@@ -29,6 +29,10 @@ private def drop_test_db
   HTTP::Client.delete(DB_URL, headers: e2e_headers)
 end
 
+private def http_url : String
+  DB_URL
+end
+
 private def http_db : CouchDB::Database
   CouchDB::Database.new(DB_URL)
 end
@@ -72,6 +76,77 @@ describe CouchDB::Adapter::HTTP do
       ctx = OpenSSL::SSL::Context::Client.new
       adapter.tls = ctx
       adapter.@tls.should eq(ctx)
+    end
+  end
+
+  describe "#bearer_token=" do
+    it "writes Bearer value into @auth" do
+      a = CouchDB::Adapter::HTTP.new("https://localhost:5984/testdb")
+      a.bearer_token = "tok"
+      a.@auth.should eq("Bearer tok")
+    end
+
+    it "replaces existing Basic credentials" do
+      a = CouchDB::Adapter::HTTP.new("http://admin:secret@localhost:5984/testdb")
+      a.bearer_token = "tok"
+      a.@auth.should eq("Bearer tok")
+    end
+  end
+
+  describe "#on_request" do
+    it "stores the interceptor" do
+      a = CouchDB::Adapter::HTTP.new("https://localhost:5984/testdb")
+      a.on_request { |_req| nil }
+      a.@request_interceptor.should_not be_nil
+    end
+  end
+
+  describe "#on_response" do
+    it "stores the interceptor" do
+      a = CouchDB::Adapter::HTTP.new("https://localhost:5984/testdb")
+      a.on_response { |resp| resp }
+      a.@response_interceptor.should_not be_nil
+    end
+  end
+end
+
+describe CouchDB::Database do
+  describe ".new(adapter)" do
+    it "accepts a pre-built HTTP adapter" do
+      adapter = CouchDB::Adapter::HTTP.new("https://localhost:5984/testdb")
+      db = CouchDB::Database.new(adapter)
+      db.adapter.should be(adapter)
+    end
+
+    it "pre-configured bearer token is preserved" do
+      adapter = CouchDB::Adapter::HTTP.new("https://localhost:5984/testdb")
+      adapter.bearer_token = "tok"
+      db = CouchDB::Database.new(adapter)
+      db.adapter.as(CouchDB::Adapter::HTTP).@auth.should eq("Bearer tok")
+    end
+  end
+end
+
+describe CouchDB::Adapter::HTTP do
+  describe ".bearer" do
+    it "sets Bearer auth on a new adapter" do
+      a = CouchDB::Adapter::HTTP.bearer("https://localhost:5984/testdb", token: "secret")
+      a.@auth.should eq("Bearer secret")
+    end
+  end
+end
+
+describe CouchDB::Database do
+  describe "#bearer_token=" do
+    it "delegates to HTTP adapter" do
+      db = CouchDB::Database.new("https://localhost:5984/testdb")
+      db.bearer_token = "tok"
+      db.adapter.as(CouchDB::Adapter::HTTP).@auth.should eq("Bearer tok")
+    end
+
+    it "is a no-op for SQLite databases" do
+      db = CouchDB::Database.new(":memory:")
+      db.bearer_token = "tok" # must not raise
     end
   end
 end
@@ -342,6 +417,64 @@ else
 
       att = local.get_attachment("rep-att-src", "data.txt")
       String.new(att[:data]).should eq("replicated")
+    end
+  end
+
+  # -------------------------------------------------------------------------
+  # Bearer token auth
+  # -------------------------------------------------------------------------
+
+  describe "bearer token" do
+    it "sends Bearer header instead of Basic credentials" do
+      captured = ""
+      db = CouchDB::Database.new(http_url)
+      db.on_request { |req| captured = req.headers["Authorization"]? || "" }
+      db.bearer_token = "test-bearer-xyz"
+      db.info
+      captured.should eq("Bearer test-bearer-xyz")
+    end
+  end
+
+  # -------------------------------------------------------------------------
+  # Request interceptor
+  # -------------------------------------------------------------------------
+
+  describe "request interceptor" do
+    it "fires before every request and can add custom headers" do
+      fired = false
+      db = CouchDB::Database.new(http_url)
+      db.on_request do |req|
+        req.headers["X-Intercepted"] = "yes"
+        fired = true
+      end
+      db.info
+      fired.should be_true
+    end
+  end
+
+  # -------------------------------------------------------------------------
+  # Response interceptor
+  # -------------------------------------------------------------------------
+
+  describe "response interceptor" do
+    it "fires after every response and receives the status code" do
+      seen = 0
+      db = CouchDB::Database.new(http_url)
+      db.on_response { |resp| seen = resp.status_code; resp }
+      db.info
+      seen.should eq(200)
+    end
+
+    it "can replace the response entirely (mock)" do
+      db = CouchDB::Database.new(http_url)
+      db.on_response do |_resp|
+        ::HTTP::Client::Response.new(
+          200,
+          body: %({"db_name":"mocked","doc_count":0,"update_seq":0}),
+          headers: ::HTTP::Headers{"Content-Type" => "application/json"}
+        )
+      end
+      db.info[:db_name].should eq("mocked")
     end
   end
 end

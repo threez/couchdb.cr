@@ -14,11 +14,13 @@ module CouchDB
   # db = CouchDB::Database.new("notes.db")                            # local SQLite
   # db = CouchDB::Database.new(":memory:")                            # in-memory SQLite (testing)
   # db = CouchDB::Database.new("http://admin:pw@localhost:5984/mydb") # remote CouchDB
+  # adapter = CouchDB::Adapter::HTTP.bearer("https://db.example.com/mydb", token: "secret")
+  # db = CouchDB::Database.new(adapter) # any `Adapter` instance → used directly (no auto-detection)
   # ```
   class Database
     include Adapter
 
-    @adapter : Adapter::HTTP | Adapter::SQLite
+    @adapter : Adapter
 
     # Returns the underlying adapter (SQLite or HTTP).
     def adapter : Adapter
@@ -55,6 +57,19 @@ module CouchDB
                  end
     end
 
+    # Accepts a pre-built adapter directly.
+    # Use this to inject a custom adapter implementation or a pre-configured
+    # `Adapter::HTTP` (e.g. with `bearer_token=` or TLS already set).
+    #
+    # ```
+    # adapter = CouchDB::Adapter::HTTP.new("https://db.example.com/mydb")
+    # adapter.bearer_token = "secret"
+    # db = CouchDB::Database.new(adapter)
+    # ```
+    def initialize(adapter : Adapter)
+      @adapter = adapter
+    end
+
     # Returns `{db_name:, doc_count:, update_seq:}` for the underlying database.
     def info : NamedTuple(db_name: String, doc_count: Int64, update_seq: Int64)
       @adapter.info
@@ -88,6 +103,28 @@ module CouchDB
     def tls=(ctx : OpenSSL::SSL::Context::Client)
       case a = @adapter
       when Adapter::HTTP then a.tls = ctx
+      end
+    end
+
+    # Sets Bearer token authentication on the HTTP adapter, replacing any URL credentials.
+    # No-op for SQLite.
+    def bearer_token=(token : String)
+      case a = @adapter
+      when Adapter::HTTP then a.bearer_token = token
+      end
+    end
+
+    # Registers a before-request interceptor on the HTTP adapter. No-op for SQLite.
+    def on_request(&block : ::HTTP::Request -> Nil)
+      case a = @adapter
+      when Adapter::HTTP then a.on_request(&block)
+      end
+    end
+
+    # Registers an after-response interceptor on the HTTP adapter. No-op for SQLite.
+    def on_response(&block : ::HTTP::Client::Response -> ::HTTP::Client::Response)
+      case a = @adapter
+      when Adapter::HTTP then a.on_response(&block)
       end
     end
 
@@ -182,7 +219,26 @@ module CouchDB
     # `heartbeat` controls polling interval (SQLite) or CouchDB heartbeat (HTTP) in ms.
     def changes_feed(since : String = "0", heartbeat : Int32 = 1000,
                      include_docs : Bool = false, & : JSON::Any -> _)
-      @adapter.changes_feed(since, heartbeat, include_docs) { |feed_entry| yield feed_entry }
+      # Dispatch to the concrete type so Crystal's block-inlining check does not see a
+      # recursive path through the virtual Adapter+ type (which includes Database itself).
+      # Custom adapters fall back to a polling loop via #changes.
+      case a = @adapter
+      when Adapter::HTTP
+        a.changes_feed(since, heartbeat, include_docs) { |e| yield e }
+      when Adapter::SQLite
+        a.changes_feed(since, heartbeat, include_docs) { |e| yield e }
+      else
+        current_seq = since
+        loop do
+          result = a.changes(since: current_seq, include_docs: include_docs)
+          result[:results].each do |change|
+            yield change
+            current_seq = change["seq"]?.try(&.as_s?) || result[:last_seq]
+          end
+          current_seq = result[:last_seq]
+          sleep heartbeat.milliseconds
+        end
+      end
     end
 
     # Returns missing revisions for the given `id → [revs]` map.
