@@ -421,6 +421,46 @@ else
   end
 
   # -------------------------------------------------------------------------
+  # Database.local_replica
+  # -------------------------------------------------------------------------
+
+  describe "Database.local_replica" do
+    it "pushes local writes to remote" do
+      db = CouchDB::Database.local_replica(":memory:", DB_URL)
+      sleep 100.milliseconds
+      db.put(make_doc("lr-push"))
+      sleep 500.milliseconds
+      http_db.get("lr-push").id.should eq("lr-push")
+      db.close
+    end
+
+    it "pulls remote writes to local" do
+      db = CouchDB::Database.local_replica(":memory:", DB_URL)
+      sleep 100.milliseconds
+      http_db.put(make_doc("lr-pull"))
+      sleep 500.milliseconds
+      db.get("lr-pull").id.should eq("lr-pull")
+      db.close
+    end
+
+    it "write_upstream: put writes to remote and blocks until locally available" do
+      db = CouchDB::Database.local_replica(":memory:", DB_URL, write_upstream: true)
+      sleep 100.milliseconds
+      result = db.put(make_doc("lr-upstream"))
+      # put already waited — local must have the exact rev immediately
+      db.get("lr-upstream").rev.should eq(result[:rev])
+      db.close
+    end
+
+    it "returns a LocalReplica which is a Database" do
+      db = CouchDB::Database.local_replica(":memory:", DB_URL)
+      db.should be_a(CouchDB::LocalReplica)
+      db.should be_a(CouchDB::Database)
+      db.close
+    end
+  end
+
+  # -------------------------------------------------------------------------
   # Bearer token auth
   # -------------------------------------------------------------------------
 
