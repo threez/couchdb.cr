@@ -44,6 +44,21 @@ private def make_doc(id : String, **fields) : CouchDB::Document
   doc
 end
 
+# Retries the block every 100 ms for up to *timeout* before letting it raise.
+# Avoids fixed sleeps that are either too short (flaky) or too long (slow).
+private def eventually(timeout = 5.seconds, &)
+  deadline = Time.instant + timeout
+  loop do
+    begin
+      yield
+      return
+    rescue ex
+      raise ex if Time.instant >= deadline
+      sleep 100.milliseconds
+    end
+  end
+end
+
 # ---------------------------------------------------------------------------
 # Guard — skip everything when no server is configured
 # ---------------------------------------------------------------------------
@@ -417,6 +432,43 @@ else
 
       att = local.get_attachment("rep-att-src", "data.txt")
       String.new(att[:data]).should eq("replicated")
+    end
+  end
+
+  # -------------------------------------------------------------------------
+  # Database.local_replica
+  # -------------------------------------------------------------------------
+
+  describe "Database.local_replica" do
+    it "pushes local writes to remote" do
+      # heartbeat: 200 so the push fiber polls every 200 ms
+      db = CouchDB::Database.local_replica(":memory:", DB_URL, heartbeat: 200)
+      db.put(make_doc("lr-push"))
+      eventually { http_db.get("lr-push").id.should eq("lr-push") }
+      db.close
+    end
+
+    it "pulls remote writes to local" do
+      db = CouchDB::Database.local_replica(":memory:", DB_URL, heartbeat: 200)
+      http_db.put(make_doc("lr-pull"))
+      eventually { db.get("lr-pull").id.should eq("lr-pull") }
+      db.close
+    end
+
+    it "write_upstream: put writes to remote and blocks until locally available" do
+      # heartbeat: 200 keeps the pull fiber responsive so wait_for_local succeeds fast
+      db = CouchDB::Database.local_replica(":memory:", DB_URL, heartbeat: 200, write_upstream: true)
+      result = db.put(make_doc("lr-upstream"))
+      # put already waited — local must have the exact rev immediately
+      db.get("lr-upstream").rev.should eq(result[:rev])
+      db.close
+    end
+
+    it "returns a LocalReplica which is a Database" do
+      db = CouchDB::Database.local_replica(":memory:", DB_URL)
+      db.should be_a(CouchDB::LocalReplica)
+      db.should be_a(CouchDB::Database)
+      db.close
     end
   end
 
