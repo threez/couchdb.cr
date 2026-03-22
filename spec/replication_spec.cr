@@ -203,3 +203,47 @@ describe "filtered replication" do
     expect_raises(CouchDB::NotFound) { target.get("d3") }
   end
 end
+
+describe CouchDB::Replication::Replicator do
+  describe "checkpoint_store" do
+    it "stores checkpoint only on the given store adapter" do
+      source = mem_db
+      target = mem_db
+      store = mem_db
+      source.put(make_doc("ckstore-doc-1"))
+
+      session = CouchDB::Replication::Replicator.new(
+        source, target,
+        checkpoint_store: store,
+      ).replicate
+      session.ok?.should be_true
+      session.docs_written.should eq(1)
+
+      # Second run with same store must be idempotent — checkpoint was saved on store
+      session2 = CouchDB::Replication::Replicator.new(
+        source, target,
+        checkpoint_store: store,
+      ).replicate
+      session2.ok?.should be_true
+      session2.docs_written.should eq(0)
+    end
+
+    it "reruns from scratch when a different store has no checkpoint" do
+      source = mem_db
+      target = mem_db
+      store = mem_db
+      source.put(make_doc("ckstore-doc-2"))
+
+      CouchDB::Replication::Replicator.new(source, target, checkpoint_store: store).replicate
+
+      # A fresh store has no checkpoint — replicator must try again
+      fresh_store = mem_db
+      session = CouchDB::Replication::Replicator.new(
+        source, target,
+        checkpoint_store: fresh_store,
+      ).replicate
+      session.ok?.should be_true
+      # docs_written may be 0 (revs_diff finds no missing) but must not error
+    end
+  end
+end

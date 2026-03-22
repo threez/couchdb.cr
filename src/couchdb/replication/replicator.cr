@@ -34,6 +34,7 @@ module CouchDB
         @target : Adapter,
         @doc_ids : Array(String)? = nil,
         @filter : Proc(Document, Bool)? = nil,
+        @checkpoint_store : Adapter? = nil,
       )
       end
 
@@ -50,7 +51,7 @@ module CouchDB
         # Step 1 & 2: Verify peers (info already fetched above — raises on failure)
 
         # Step 3: Read checkpoint
-        checkpoint = Checkpoint.new(@source, @target)
+        checkpoint = Checkpoint.new(@source, @target, @checkpoint_store)
         since = checkpoint.read
 
         loop do

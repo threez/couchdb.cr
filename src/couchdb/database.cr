@@ -450,6 +450,31 @@ module CouchDB
       replicate_to(remote, doc_ids: doc_ids, selector: selector, filter: filter)
     end
 
+    # Creates a `LocalReplica`: a local SQLite database that continuously syncs
+    # bidirectionally with the remote CouchDB at *remote_url*.
+    #
+    # All reads go to the local store. Writes go to local by default; pass
+    # `write_upstream: true` to write to the remote instead and block until
+    # the change replicates locally.
+    #
+    # Checkpoints are stored on the remote only, so deleting and recreating the
+    # local file resumes from where replication left off.
+    #
+    # ```
+    # db = CouchDB::Database.local_replica("notes.db",
+    #   "https://user:pass@mycouch.example.com/notes")
+    # db.on_sync_error { |dir, ex| Log.error { "#{dir}: #{ex.message}" } }
+    # db.close # stops background sync
+    # ```
+    def self.local_replica(
+      local_path : String,
+      remote_url : String,
+      heartbeat : Int32 = 2000,
+      write_upstream : Bool = false,
+    ) : LocalReplica
+      LocalReplica.new(local_path, remote_url, heartbeat, write_upstream)
+    end
+
     private def selector_to_filter(sel : JSON::Any?) : Proc(Document, Bool)?
       return nil unless sel
       ->(doc : Document) { match_selector?(JSON.parse(doc.to_json), sel) }

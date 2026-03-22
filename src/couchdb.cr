@@ -10,6 +10,7 @@ require "./couchdb/replication/session"
 require "./couchdb/replication/checkpoint"
 require "./couchdb/replication/replicator"
 require "./couchdb/database"
+require "./couchdb/local_replica"
 
 module CouchDB
   VERSION = "0.1.1"

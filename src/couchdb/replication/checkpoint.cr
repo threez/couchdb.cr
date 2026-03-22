@@ -9,9 +9,14 @@ module CouchDB
     # from where the previous run left off rather than reprocessing the entire
     # changes feed.
     #
-    # Checkpoints are stored on both the source and the target adapter. The starting
-    # sequence is the minimum of the two checkpoints so that neither side can get
-    # ahead of the other.
+    # By default checkpoints are stored on both the source and the target adapter.
+    # The starting sequence is the minimum of the two checkpoints so that neither
+    # side can get ahead of the other.
+    #
+    # When a *store* adapter is provided, checkpoints are read from and written to
+    # that single adapter only (typically the remote). This is the PouchDB pattern:
+    # the remote retains the checkpoint, so a deleted/recreated local store resumes
+    # replication without a full resync.
     class Checkpoint
       CHECKPOINT_PREFIX = "_local/"
 
@@ -20,26 +25,31 @@ module CouchDB
       # Creates a checkpoint manager for the given *source* and *target* adapters.
       # The checkpoint document ID is derived from the MD5 of both database names,
       # giving a stable, collision-resistant identifier for this replication pair.
-      def initialize(@source : Adapter, @target : Adapter)
+      #
+      # Pass *store* to pin checkpoint reads and writes to a single adapter.
+      def initialize(@source : Adapter, @target : Adapter, @store : Adapter? = nil)
         @checkpoint_id = compute_id
       end
 
       # Returns the sequence number to start from for this replication.
       #
-      # Reads the checkpoint from both source and target and returns the minimum,
+      # When a *store* adapter was given, reads only from that adapter.
+      # Otherwise reads from both source and target and returns the minimum,
       # ensuring that neither side can skip changes the other has not yet seen.
       # Returns `"0"` when no checkpoint exists.
       def read : String
-        source_seq = read_from(@source)
-        target_seq = read_from(@target)
-
-        # Use min of both so we never skip changes
-        source_n = source_seq.to_i64? || 0_i64
-        target_n = target_seq.to_i64? || 0_i64
-        {source_n, target_n}.min.to_s
+        if s = @store
+          read_from(s)
+        else
+          source_n = read_from(@source).to_i64? || 0_i64
+          target_n = read_from(@target).to_i64? || 0_i64
+          {source_n, target_n}.min.to_s
+        end
       end
 
-      # Writes *seq* as the new checkpoint on both source and target.
+      # Writes *seq* as the new checkpoint.
+      # When a *store* adapter was given, writes only to that adapter.
+      # Otherwise writes to both source and target.
       # Called by `Replicator` after each successfully processed batch.
       def write(seq : String)
         doc = Document.new
@@ -47,8 +57,12 @@ module CouchDB
         doc["last_seq"] = JSON::Any.new(seq)
         doc["session_id"] = JSON::Any.new(Random::Secure.hex(16))
 
-        write_to(@source, doc)
-        write_to(@target, doc)
+        if s = @store
+          write_to(s, doc)
+        else
+          write_to(@source, doc)
+          write_to(@target, doc)
+        end
       end
 
       private def read_from(adapter : Adapter) : String
