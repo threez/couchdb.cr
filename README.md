@@ -8,6 +8,7 @@ Queries are answered instantly from local SQLite storage. Replication syncs with
 
 - **Local-first**: all reads and writes go to a local SQLite3 database — no network required
 - **CouchDB replication**: 7-step protocol with resumable checkpoints; sync to/from any CouchDB 3.x server
+- **Continuous sync**: `Database.local_replica` sets up live bidirectional replication in the background; choose local or upstream write semantics
 - **Typed documents**: subclass `CouchDB::Document` to add strongly-typed fields to your models
 - **Open schema**: unknown fields are preserved transparently through `json_unmapped`
 - **Auto-routing**: pass a file path for SQLite, pass an `http://` URL for a remote CouchDB
@@ -20,7 +21,7 @@ Add to your `shard.yml`:
 dependencies:
   couchdb:
     github: threez/couchdb.cr
-    version: ~> 0.1
+    version: ~> 0.2
 ```
 
 Then run:
@@ -399,6 +400,105 @@ puts session.error           # error message if ok == false
 
 Replication is **resumable** — a checkpoint is written to both source and target after every batch of 100 documents, so interrupted replications restart from where they left off.
 
+### Continuous Sync
+
+`Database.local_replica` creates a local SQLite database that continuously syncs bidirectionally with a remote CouchDB. Two background fibers (push and pull) run for the lifetime of the object. Checkpoints are stored on the remote only, so deleting and recreating the local file resumes from where replication left off.
+
+```crystal
+db = CouchDB::Database.local_replica("notes.db",
+       "https://admin:secret@db.example.com/notes")
+
+# Use db exactly like a regular Database — reads/writes go to local SQLite.
+db.put(note)
+db.get("note-1")
+
+db.close   # stops sync fibers and closes both adapters
+```
+
+#### Write modes
+
+**Local writes** (default) — `put`/`remove` are instant (local SQLite only). The background push fiber syncs them to the remote asynchronously.
+
+```crystal
+db = CouchDB::Database.local_replica("notes.db", remote_url)
+
+result = db.put(note)   # returns immediately — written to local SQLite
+db.get(result[:id])     # available locally right away
+# … push fiber syncs to remote in the background
+```
+
+**Upstream writes** (`write_upstream: true`) — `put`/`remove` write to the remote first, then block until the change has been replicated locally. Reads always come from local.
+
+```crystal
+db = CouchDB::Database.local_replica("notes.db", remote_url,
+       write_upstream: true)
+
+result = db.put(note)   # writes to remote, then waits for local copy
+db.get(result[:id])     # guaranteed to be present immediately
+```
+
+Use upstream mode when you need read-your-own-writes consistency across devices, or when the local store is treated as a cache rather than the source of truth.
+
+> **Timeout**: upstream `put`/`remove` raise `CouchDB::Error` if the change does not replicate locally within 5 seconds.
+
+#### Heartbeat
+
+`heartbeat` controls how often (in ms) the sync fibers poll for new changes. Lower values mean lower latency but more frequent network/DB activity.
+
+```crystal
+db = CouchDB::Database.local_replica("notes.db", remote_url,
+       heartbeat: 500)   # poll every 500 ms (default: 2000)
+```
+
+#### Error handling
+
+Register `on_sync_error` to be notified when a background replication run fails (network drop, auth error, etc.). The callback receives the direction (`"push"` or `"pull"`) and the exception. Without a registered callback, sync errors are silently swallowed so the background fibers keep running.
+
+```crystal
+db = CouchDB::Database.local_replica("notes.db", remote_url)
+
+db.on_sync_error do |direction, ex|
+  case ex
+  when CouchDB::Unauthorized
+    puts "#{direction}: credentials rejected"
+    db.bearer_token = refresh_token()
+  else
+    puts "#{direction} sync error: #{ex.message}"
+  end
+end
+```
+
+#### Conflict resolution
+
+Concurrent edits on both sides can produce `Conflict` errors during the push sync. Register `on_conflict` on the replica to resolve them automatically:
+
+```crystal
+db = CouchDB::Database.local_replica("notes.db", remote_url)
+
+# Last-write-wins: the local (attempted) version always wins
+db.on_conflict do |existing, attempted|
+  attempted
+end
+
+# Field-merge: combine numeric fields from both sides
+db.on_conflict do |existing, attempted|
+  merged = attempted.dup
+  merged["count"] = JSON::Any.new(
+    existing["count"].as_i64 + attempted["count"].as_i64
+  )
+  merged
+end
+```
+
+In **upstream write mode**, conflicts happen on the remote during `put`. The same `on_conflict` hook applies — returning a `Document` retries the remote write and then waits for the resolved document to replicate locally.
+
+```crystal
+db = CouchDB::Database.local_replica("notes.db", remote_url,
+       write_upstream: true)
+
+db.on_conflict { |existing, _attempted| existing }   # remote always wins
+```
+
 ## Error Handling
 
 ```crystal
@@ -429,13 +529,14 @@ All exceptions inherit from `CouchDB::Error < Exception`.
 
 ```
 CouchDB::Database           public facade — auto-detects adapter
+  └── LocalReplica          continuous bidirectional sync (local_replica)
         |
 CouchDB::Adapter            abstract interface
   ├── Adapter::SQLite        local storage via crystal-db + crystal-sqlite3
   └── Adapter::HTTP          remote CouchDB via HTTP::Client
         |
 CouchDB::Replication::Replicator   7-step CouchDB protocol
-  ├── Replication::Checkpoint       _local/ checkpoint read/write
+  ├── Replication::Checkpoint       _local/ checkpoint read/write (remote only for LocalReplica)
   └── Replication::Session          result object for one replication run
 ```
 
