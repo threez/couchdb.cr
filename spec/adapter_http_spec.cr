@@ -123,6 +123,20 @@ describe CouchDB::Adapter::HTTP do
       a.@response_interceptor.should_not be_nil
     end
   end
+
+  describe "#get" do
+    it "preserves colons and other pchar characters in document IDs in the request path" do
+      seen_path = ""
+      db = CouchDB::Database.new("http://admin:password@localhost:5984/testdb")
+      db.on_request { |req| seen_path = req.path }
+      begin
+        db.get("user:123")
+      rescue CouchDB::NotFound | Socket::ConnectError
+      end
+      seen_path.should contain("user:123")
+      seen_path.should_not contain("%3A")
+    end
+  end
 end
 
 describe CouchDB::Database do
