@@ -105,7 +105,7 @@ module CouchDB
 
       # HTTP implementation of `Adapter#get`. See `Adapter#get` for the contract.
       def get(id : String) : Document
-        resp = get_request("#{@db_path}/#{URI.encode_path(id)}")
+        resp = get_request("#{@db_path}/#{encode_doc_id(id)}")
         raise NotFound.new(id) if resp.status_code == 404
         check_response!(resp)
         Document.from_json(resp.body)
@@ -115,7 +115,7 @@ module CouchDB
       def put(doc : Document) : NamedTuple(ok: Bool, id: String, rev: String)
         id = doc.id
         raise BadRequest.new("Missing _id") if id.empty?
-        resp = put_request("#{@db_path}/#{URI.encode_path(id)}", doc.to_json)
+        resp = put_request("#{@db_path}/#{encode_doc_id(id)}", doc.to_json)
         raise Conflict.new(id, doc.rev || "") if resp.status_code == 409
         check_response!(resp)
         data = JSON.parse(resp.body)
@@ -124,7 +124,7 @@ module CouchDB
 
       # HTTP implementation of `Adapter#remove`. See `Adapter#remove` for the contract.
       def remove(id : String, rev : String) : NamedTuple(ok: Bool)
-        resp = delete_request("#{@db_path}/#{URI.encode_path(id)}?rev=#{rev}")
+        resp = delete_request("#{@db_path}/#{encode_doc_id(id)}?rev=#{rev}")
         raise NotFound.new(id) if resp.status_code == 404
         raise Conflict.new(id, rev) if resp.status_code == 409
         check_response!(resp)
@@ -268,7 +268,7 @@ module CouchDB
 
       # HTTP implementation of `Adapter#get_attachment`. See `Adapter#get_attachment` for the contract.
       def get_attachment(id : String, attname : String) : NamedTuple(data: Bytes, content_type: String)
-        resp = get_request("#{@db_path}/#{URI.encode_path(id)}/#{URI.encode_path(attname)}")
+        resp = get_request("#{@db_path}/#{encode_doc_id(id)}/#{encode_doc_id(attname)}")
         raise NotFound.new("#{id}/#{attname}") if resp.status_code == 404
         check_response!(resp)
         ct = resp.headers["Content-Type"]? || "application/octet-stream"
@@ -278,7 +278,7 @@ module CouchDB
       # HTTP implementation of `Adapter#put_attachment`. See `Adapter#put_attachment` for the contract.
       def put_attachment(id : String, attname : String, rev : String,
                          data : Bytes, content_type : String) : NamedTuple(ok: Bool, id: String, rev: String)
-        path = "#{@db_path}/#{URI.encode_path(id)}/#{URI.encode_path(attname)}?rev=#{rev}"
+        path = "#{@db_path}/#{encode_doc_id(id)}/#{encode_doc_id(attname)}?rev=#{rev}"
         resp = put_raw_request(path, data, content_type)
         raise Conflict.new(id, rev) if resp.status_code == 409
         check_response!(resp)
@@ -288,7 +288,7 @@ module CouchDB
 
       # HTTP implementation of `Adapter#delete_attachment`. See `Adapter#delete_attachment` for the contract.
       def delete_attachment(id : String, attname : String, rev : String) : NamedTuple(ok: Bool, id: String, rev: String)
-        path = "#{@db_path}/#{URI.encode_path(id)}/#{URI.encode_path(attname)}?rev=#{rev}"
+        path = "#{@db_path}/#{encode_doc_id(id)}/#{encode_doc_id(attname)}?rev=#{rev}"
         resp = delete_request(path)
         raise NotFound.new("#{id}/#{attname}") if resp.status_code == 404
         raise Conflict.new(id, rev) if resp.status_code == 409
@@ -385,6 +385,22 @@ module CouchDB
           raise Conflict.new("unknown", "unknown")
         else
           raise Error.new("HTTP #{resp.status_code}: #{resp.body}")
+        end
+      end
+
+      private def encode_doc_id(id : String) : String
+        String.build do |io|
+          id.each_byte do |byte|
+            char = byte.unsafe_chr
+            if char.ascii_alphanumeric? || char.in?('-', '.', '_', '~',  # unreserved
+                 ':', '@',                                               # pchar extras
+                 '!', '$', '&', '\'', '(', ')', '*', '+', ',', ';', '=') # sub-delims
+              io << char
+            else
+              io << '%'
+              io << byte.to_s(16, upcase: true).rjust(2, '0')
+            end
+          end
         end
       end
 
