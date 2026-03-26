@@ -1,5 +1,6 @@
 require "json"
 require "base64"
+require "log"
 
 require "./couchdb/error"
 require "./couchdb/document"
@@ -13,5 +14,6 @@ require "./couchdb/database"
 require "./couchdb/local_replica"
 
 module CouchDB
-  VERSION = "0.2.1"
+  VERSION = "0.3.0"
+  Log     = ::Log.for("couchdb")
 end
