@@ -33,11 +33,15 @@ module CouchDB
 
     UPSTREAM_WAIT_INTERVAL = 10.milliseconds
     UPSTREAM_WAIT_TIMEOUT  = 5000.milliseconds
+    SYNC_INITIAL_BACKOFF   = 1.second
+    SYNC_MAX_BACKOFF       = 60.seconds
 
     @remote : Database
     @running : Bool
     @write_upstream : Bool
     @on_sync_error : SyncErrorCallback?
+    @sync_initial_backoff : Time::Span
+    @sync_max_backoff : Time::Span
 
     # Registers a block called when a background sync run fails.
     def on_sync_error(&block : String, Exception -> Nil)
@@ -50,11 +54,15 @@ module CouchDB
       remote_url : String,
       heartbeat : Int32 = 2000,
       write_upstream : Bool = false,
+      sync_initial_backoff : Time::Span = SYNC_INITIAL_BACKOFF,
+      sync_max_backoff : Time::Span = SYNC_MAX_BACKOFF,
     )
       super(local_path)
       @remote = Database.new(remote_url)
       @running = true
       @write_upstream = write_upstream
+      @sync_initial_backoff = sync_initial_backoff
+      @sync_max_backoff = sync_max_backoff
       start_sync(heartbeat)
     end
 
@@ -107,8 +115,11 @@ module CouchDB
 
     private def spawn_sync_fiber(direction : String, source : Adapter, target : Adapter, heartbeat : Int32)
       remote_adapter = @remote.adapter
+      initial_backoff = @sync_initial_backoff
+      max_backoff = @sync_max_backoff
       spawn do
         current_seq = "0"
+        backoff = initial_backoff
         while @running
           begin
             source.changes_feed(since: current_seq, heartbeat: heartbeat) do |change|
@@ -117,6 +128,8 @@ module CouchDB
             end
           rescue ex : Exception
             notify_error(direction, ex)
+            sleep backoff
+            backoff = {backoff * 2, max_backoff}.min
             next
           end
           next unless @running
@@ -129,17 +142,23 @@ module CouchDB
               # was never called; current_seq already holds the triggering seq.
               seq = session.last_seq
               current_seq = seq unless seq == "0" && current_seq != "0"
+              backoff = initial_backoff
             else
               notify_error(direction, Exception.new(session.error || "replication failed"))
+              sleep backoff
+              backoff = {backoff * 2, max_backoff}.min
             end
           rescue ex : Exception
             notify_error(direction, ex)
+            sleep backoff
+            backoff = {backoff * 2, max_backoff}.min
           end
         end
       end
     end
 
     private def notify_error(direction : String, ex : Exception)
+      Log.warn { "#{direction}: #{ex.message}" }
       @on_sync_error.try(&.call(direction, ex))
     end
 

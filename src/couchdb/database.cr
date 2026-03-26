@@ -471,8 +471,11 @@ module CouchDB
       remote_url : String,
       heartbeat : Int32 = 2000,
       write_upstream : Bool = false,
+      sync_initial_backoff : Time::Span = LocalReplica::SYNC_INITIAL_BACKOFF,
+      sync_max_backoff : Time::Span = LocalReplica::SYNC_MAX_BACKOFF,
     ) : LocalReplica
-      LocalReplica.new(local_path, remote_url, heartbeat, write_upstream)
+      LocalReplica.new(local_path, remote_url, heartbeat, write_upstream,
+        sync_initial_backoff, sync_max_backoff)
     end
 
     private def selector_to_filter(sel : JSON::Any?) : Proc(Document, Bool)?

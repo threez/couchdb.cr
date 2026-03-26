@@ -452,7 +452,9 @@ db = CouchDB::Database.local_replica("notes.db", remote_url,
 
 #### Error handling
 
-Register `on_sync_error` to be notified when a background replication run fails (network drop, auth error, etc.). The callback receives the direction (`"push"` or `"pull"`) and the exception. Without a registered callback, sync errors are silently swallowed so the background fibers keep running.
+When a background sync run fails (network drop, DNS error, auth error, etc.) the library automatically applies **exponential backoff** before retrying — starting at 1 second and doubling up to 60 seconds. This prevents error floods when the remote is temporarily unreachable.
+
+Register `on_sync_error` to be notified of failures. The callback receives the direction (`"push"` or `"pull"`) and the exception. Without a registered callback, errors are silently swallowed while the fibers keep running with backoff.
 
 ```crystal
 db = CouchDB::Database.local_replica("notes.db", remote_url)
@@ -467,6 +469,25 @@ db.on_sync_error do |direction, ex|
   end
 end
 ```
+
+The backoff limits are configurable:
+
+```crystal
+db = CouchDB::Database.local_replica("notes.db", remote_url,
+       sync_initial_backoff: 500.milliseconds,
+       sync_max_backoff: 30.seconds)
+```
+
+#### Logging
+
+The shard emits warnings through Crystal's standard `Log` module under the `"couchdb"` source. Logging is **off by default** — no output is produced unless your application configures a backend:
+
+```crystal
+require "log"
+Log.setup("couchdb", :warn, Log::IOBackend.new)
+```
+
+This logs the same errors that `on_sync_error` receives. Both mechanisms can be used together.
 
 #### Conflict resolution
 
