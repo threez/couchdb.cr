@@ -1,5 +1,5 @@
 name: couchdb
-version: 0.3.0
+version: 0.3.1
 
 authors:
   - Vincent Landgraf <vincent@landgrafx.de>
@@ -11,15 +11,15 @@ license: MIT
 dependencies:
   db:
     github: crystal-lang/crystal-db
-    version: ~> 0.13
+    version: ~> 0.14
   sqlite3:
     github: crystal-lang/crystal-sqlite3
-    version: ~> 0.20
+    version: ~> 0.23
 
 development_dependencies:
   webmock:
     github: manastech/webmock.cr
-    version: ~> 0.5
+    version: ~> 0.14
   ameba:
     github: crystal-ameba/ameba
     version: ~> 1.6.0
