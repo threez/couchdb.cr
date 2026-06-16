@@ -94,17 +94,15 @@ Extra fields not declared on the subclass are still preserved in `json_unmapped`
 
 `CouchDB::Document` provides:
 
-| Member | Type | Description |
-|--------|------|-------------|
-| `id` | `String` | Maps to `_id` in JSON |
-| `rev` | `String?` | Maps to `_rev`; `nil` for new documents |
-| `deleted` | `Bool?` | Maps to `_deleted`; `nil` for normal documents |
-| `deleted?` | `Bool` | Predicate — returns `true` when `deleted == true` |
-| `next_rev` | `String` | Computes what the next revision string would be |
-| `json_unmapped` | `Hash(String, JSON::Any)` | All fields not covered by declared properties |
-| `doc["key"]` | `JSON::Any` | Hash-style read (routes `_id`/`_rev`/`_deleted` to typed fields) |
-| `doc["key"] = v` | — | Hash-style write |
-| `doc["key"]?` | `JSON::Any?` | Hash-style read, returns `nil` if absent |
+- `id` *(`String`)* — maps to `_id` in JSON
+- `rev` *(`String?`)* — maps to `_rev`; `nil` for new documents
+- `deleted` *(`Bool?`)* — maps to `_deleted`; `nil` for normal documents
+- `deleted?` *(`Bool`)* — predicate; returns `true` when `deleted == true`
+- `next_rev` *(`String`)* — computes what the next revision string would be
+- `json_unmapped` *(`Hash(String, JSON::Any)`)* — all fields not covered by declared properties
+- `doc["key"]` *(`JSON::Any`)* — hash-style read; routes `_id`/`_rev`/`_deleted` to typed fields
+- `doc["key"] = v` — hash-style write
+- `doc["key"]?` *(`JSON::Any?`)* — hash-style read; returns `nil` if absent
 
 ## Database API
 
@@ -160,11 +158,9 @@ db.changes_feed(since: last_seq, include_docs: true) do |change|
 end
 ```
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `since` | `"0"` | Starting sequence (exclusive). `"0"` yields all changes. |
-| `heartbeat` | `1000` | Polling interval in ms (SQLite) or CouchDB heartbeat in ms (HTTP). |
-| `include_docs` | `false` | Embed full document bodies in each change entry. |
+- `since` (default `"0"`) — starting sequence (exclusive); `"0"` yields all changes
+- `heartbeat` (default `1000`) — polling interval in ms (SQLite) or CouchDB heartbeat in ms (HTTP)
+- `include_docs` (default `false`) — embed full document bodies in each change entry
 
 **SQLite**: polls `update_seq` in a loop, sleeping `heartbeat` ms between polls.
 **HTTP**: opens a `feed=continuous` connection to CouchDB and reads the response body line by line.
@@ -290,27 +286,25 @@ db.find(sel, limit: 10, skip: 20)
 
 **Operator reference:**
 
-| Operator | Description | Example condition |
-|---|---|---|
-| `$eq` | Equal (default for bare values) | `{"$eq": "note"}` |
-| `$ne` | Not equal | `{"$ne": "deleted"}` |
-| `$lt` | Less than | `{"$lt": 100}` |
-| `$lte` | Less than or equal | `{"$lte": 100}` |
-| `$gt` | Greater than | `{"$gt": 0}` |
-| `$gte` | Greater than or equal | `{"$gte": 0}` |
-| `$exists` | Field presence | `{"$exists": true}` |
-| `$type` | JSON type check | `{"$type": "string"}` |
-| `$in` | Value in set | `{"$in": ["a", "b"]}` |
-| `$nin` | Value not in set | `{"$nin": ["x"]}` |
-| `$all` | Array contains all | `{"$all": ["a", "b"]}` |
-| `$size` | Array length | `{"$size": 3}` |
-| `$mod` | Integer modulo | `{"$mod": [2, 0]}` (even) |
-| `$regex` | String matches regex | `{"$regex": "^Al"}` |
-| `$elemMatch` | Array element matches sub-selector | `{"$elemMatch": {"score": {"$gt": 5}}}` |
-| `$not` | Negate field condition | `{"$not": {"$gt": 10}}` |
-| `$and` | All sub-selectors match | `{"$and": [{"a": 1}, {"b": 2}]}` |
-| `$or` | Any sub-selector matches | `{"$or": [{"type": "a"}, {"type": "b"}]}` |
-| `$nor` | No sub-selector matches | `{"$nor": [{"deleted": true}]}` |
+- `$eq` — equal (default for bare values); e.g. `{"$eq": "note"}`
+- `$ne` — not equal; e.g. `{"$ne": "deleted"}`
+- `$lt` — less than; e.g. `{"$lt": 100}`
+- `$lte` — less than or equal; e.g. `{"$lte": 100}`
+- `$gt` — greater than; e.g. `{"$gt": 0}`
+- `$gte` — greater than or equal; e.g. `{"$gte": 0}`
+- `$exists` — field presence; e.g. `{"$exists": true}`
+- `$type` — JSON type check; e.g. `{"$type": "string"}`
+- `$in` — value in set; e.g. `{"$in": ["a", "b"]}`
+- `$nin` — value not in set; e.g. `{"$nin": ["x"]}`
+- `$all` — array contains all; e.g. `{"$all": ["a", "b"]}`
+- `$size` — array length; e.g. `{"$size": 3}`
+- `$mod` — integer modulo; e.g. `{"$mod": [2, 0]}` (even)
+- `$regex` — string matches regex; e.g. `{"$regex": "^Al"}`
+- `$elemMatch` — array element matches sub-selector; e.g. `{"$elemMatch": {"score": {"$gt": 5}}}`
+- `$not` — negate field condition; e.g. `{"$not": {"$gt": 10}}`
+- `$and` — all sub-selectors match; e.g. `{"$and": [{"a": 1}, {"b": 2}]}`
+- `$or` — any sub-selector matches; e.g. `{"$or": [{"type": "a"}, {"type": "b"}]}`
+- `$nor` — no sub-selector matches; e.g. `{"$nor": [{"deleted": true}]}`
 
 Valid `$type` values: `"null"`, `"boolean"`, `"number"`, `"string"`, `"array"`, `"object"`.
 
@@ -536,13 +530,11 @@ rescue CouchDB::Conflict => e
 end
 ```
 
-| Exception | When |
-|-----------|------|
-| `CouchDB::NotFound` | `get` on a non-existent or deleted document |
-| `CouchDB::Conflict` | `put`/`remove` with a stale or missing revision |
-| `CouchDB::Unauthorized` | HTTP 401 from remote CouchDB |
-| `CouchDB::BadRequest` | Missing `_id`, missing `_rev` on replication write, etc. |
-| `CouchDB::ReplicationError` | Unrecoverable failure during replication |
+- `CouchDB::NotFound` — `get` on a non-existent or deleted document
+- `CouchDB::Conflict` — `put`/`remove` with a stale or missing revision
+- `CouchDB::Unauthorized` — HTTP 401 from remote CouchDB
+- `CouchDB::BadRequest` — missing `_id`, missing `_rev` on replication write, etc.
+- `CouchDB::ReplicationError` — unrecoverable failure during replication
 
 All exceptions inherit from `CouchDB::Error < Exception`.
 
