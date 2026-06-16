@@ -557,13 +557,11 @@ CouchDB::Replication::Replicator   7-step CouchDB protocol
 
 Four tables underpin the local adapter:
 
-| Table | Purpose |
-|-------|---------|
-| `docs` | Every revision of every document (enables `revs_diff`) |
-| `revs` | Parent-revision linkage tree |
-| `local_docs` | `_local/` documents — checkpoints, never replicated |
-| `update_seq` | Append-only sequence log; ROWID is the `update_seq` |
-| `attachments` | Current binary attachment data keyed by `(doc_id, name)` |
+- `docs` — every revision of every document (enables `revs_diff`)
+- `revs` — parent-revision linkage tree
+- `local_docs` — `_local/` documents; checkpoints, never replicated
+- `update_seq` — append-only sequence log; ROWID is the `update_seq`
+- `attachments` — current binary attachment data keyed by `(doc_id, name)`
 
 The "winning" revision is the one with the highest `seq` for a given `id`. Deleted documents are soft-deleted (a `deleted=1` row is stored) so their revisions remain queryable for replication.
 
