@@ -56,6 +56,27 @@ describe CouchDB::Replication::Replicator do
     session.docs_written.should eq(1)
     target.get("b").id.should eq("b")
   end
+
+  # Regression test for https://github.com/threez/couchdb.cr/issues/5 —
+  # the SQLite adapter's `bulk_get` returned stub-only `_attachments` entries
+  # (the binary data lives in a separate table) instead of inlining the bytes,
+  # so a target seeing the attachment for the first time rejected the write
+  # (real CouchDB answers with `412 missing_stub`; a fresh in-memory target
+  # here silently ends up with a stub and no bytes, which this test catches).
+  it "replicates attachment data, not just the stub, from a SQLite source" do
+    source = mem_db
+    target = mem_db
+
+    rev = source.put(make_doc("doc-with-att"))[:rev]
+    source.put_attachment("doc-with-att", "hot_pepper.jpg", rev, "pepper-bytes".to_slice, "image/jpeg")
+
+    session = CouchDB::Replication::Replicator.new(source, target).replicate
+    session.ok?.should be_true
+
+    att = target.get_attachment("doc-with-att", "hot_pepper.jpg")
+    String.new(att[:data]).should eq("pepper-bytes")
+    att[:content_type].should eq("image/jpeg")
+  end
 end
 
 describe CouchDB::Database do

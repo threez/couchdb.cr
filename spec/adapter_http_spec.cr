@@ -49,13 +49,11 @@ end
 private def eventually(timeout = 5.seconds, &)
   deadline = Time.instant + timeout
   loop do
-    begin
-      yield
-      return
-    rescue ex
-      raise ex if Time.instant >= deadline
-      sleep 100.milliseconds
-    end
+    yield
+    return
+  rescue ex
+    raise ex if Time.instant >= deadline
+    sleep 100.milliseconds
   end
 end
 

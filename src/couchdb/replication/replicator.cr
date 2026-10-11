@@ -105,9 +105,9 @@ module CouchDB
         results.each do |change|
           id = change["id"]?.try(&.as_s?) || next
           next if (ids = @doc_ids) && !ids.includes?(id)
-          revs = change["changes"]?.try(&.as_a?).try(&.map { |entry|
-            entry["rev"]?.try(&.as_s?) || ""
-          }.reject(&.empty?)) || [] of String
+          revs = change["changes"]?.try(&.as_a?).try do |changes|
+            changes.map { |entry| entry["rev"]?.try(&.as_s?) || "" }.reject(&.empty?)
+          end || [] of String
           id_revs[id] = revs
         end
         id_revs
