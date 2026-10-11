@@ -59,7 +59,7 @@ module CouchDB
           data         BLOB NOT NULL,
           PRIMARY KEY (doc_id, name)
         );
-      SQL
+        SQL
 
       @db : DB::Database
       @db_name : String
@@ -95,7 +95,7 @@ module CouchDB
             ) w ON d.id = w.id AND d.seq = w.max_seq
             WHERE d.deleted = 0
           )
-        SQL
+          SQL
         last_seq = @db.scalar("SELECT COALESCE(MAX(seq), 0) FROM update_seq").as(Int64)
         {db_name: @db_name, doc_count: doc_count, update_seq: last_seq}
       end
@@ -207,7 +207,7 @@ module CouchDB
           WHERE u.seq > ?
           ORDER BY u.seq ASC
           LIMIT ?
-        SQL
+          SQL
 
         results = [] of JSON::Any
         last_seq = since_seq
@@ -240,7 +240,7 @@ module CouchDB
             JOIN docs d ON d.id = u.doc_id AND d.rev = u.doc_rev
             WHERE u.seq > ?
             ORDER BY u.seq ASC
-          SQL
+            SQL
 
           @db.query(sql, current_seq) do |result_set|
             result_set.each do
@@ -286,7 +286,10 @@ module CouchDB
             pair[:id], pair[:rev],
             as: String
           )
-          docs << parse_doc(row) if row
+          next unless row
+          doc = parse_doc(row)
+          inline_attachment_stubs(doc)
+          docs << doc
         end
 
         docs
@@ -394,7 +397,7 @@ module CouchDB
           #{where}
           ORDER BY d.id
           LIMIT ? OFFSET ?
-        SQL
+          SQL
         {sql, params}
       end
 
@@ -450,13 +453,13 @@ module CouchDB
       private def bulk_docs_replication(doc : Document, id : String) : NamedTuple(id: String, rev: String, ok: Bool)
         deleted = doc.deleted?
         rev = doc.rev || raise BadRequest.new("Missing _rev for new_edits=false")
-        parent_rev = doc.json_unmapped["_revisions"]?.try(&.as_h?).try { |rev_map|
+        parent_rev = doc.json_unmapped["_revisions"]?.try(&.as_h?).try do |rev_map|
           ids = rev_map["ids"]?.try(&.as_a?)
           start = rev_map["start"]?.try(&.as_i?)
           if ids && start && ids.size > 1
             "#{start - 1}-#{ids[1].as_s}"
           end
-        }
+        end
         store_doc(id, rev, doc, deleted: deleted, parent_rev: parent_rev)
         {id: id, rev: rev, ok: true}
       end
@@ -476,7 +479,7 @@ module CouchDB
             INNER JOIN (
               SELECT id, MAX(seq) AS max_seq FROM docs WHERE id = ? GROUP BY id
             ) w ON d.id = w.id AND d.seq = w.max_seq
-          SQL
+            SQL
           id, as: {String, String, Int64, Int64, String}
         )
       end
@@ -489,7 +492,7 @@ module CouchDB
             INNER JOIN (
               SELECT id, MAX(seq) AS max_seq FROM docs WHERE id = ? GROUP BY id
             ) w ON d.id = w.id AND d.seq = w.max_seq
-          SQL
+            SQL
           id, as: String
         )
         raise NotFound.new(id) unless row
@@ -555,6 +558,40 @@ module CouchDB
 
       private def parse_doc(body : String) : Document
         Document.from_json(body)
+      end
+
+      # Fetches the stored bytes for every attachment stub on *doc* and inlines
+      # them as base64 `data`. Used by `bulk_get` when this adapter is the
+      # replication source: downstream targets (notably real CouchDB) have never
+      # seen attachments that originated here, so a stub-only `_attachments`
+      # entry is rejected with `412 missing_stub`. Replicating the full bytes on
+      # every read is simpler and matches what `Adapter::HTTP#bulk_get` already
+      # does for the same reason.
+      private def inline_attachment_stubs(doc : Document)
+        attachments = doc["_attachments"]?.try(&.as_h?) || return
+        updated = false
+
+        attachments.each do |attname, meta|
+          meta_h = meta.as_h? || next
+          next if meta_h["data"]?                     # already inlined
+          next unless meta_h["stub"]?.try(&.as_bool?) # not a stub
+
+          row = @db.query_one?(
+            "SELECT content_type, data FROM attachments WHERE doc_id = ? AND name = ?",
+            doc.id, attname, as: {String, Bytes}
+          )
+          next unless row
+          ct, data = row
+
+          attachments[attname] = JSON::Any.new({
+            "content_type" => JSON::Any.new(ct),
+            "data"         => JSON::Any.new(Base64.strict_encode(data)),
+            "length"       => JSON::Any.new(data.size.to_i64),
+          } of String => JSON::Any)
+          updated = true
+        end
+
+        doc["_attachments"] = JSON::Any.new(attachments) if updated
       end
     end
   end

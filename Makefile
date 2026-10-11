@@ -15,6 +15,7 @@ spec:
 
 lib/ameba/bin/ameba:
 	shards install
+	crystal build lib/ameba/src/cli.cr -o lib/ameba/bin/ameba
 
 lint: lib/ameba/bin/ameba
 	lib/ameba/bin/ameba

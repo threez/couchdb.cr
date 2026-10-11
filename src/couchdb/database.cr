@@ -479,7 +479,7 @@ module CouchDB
     end
 
     private def selector_to_filter(sel : JSON::Any?) : Proc(Document, Bool)?
-      return nil unless sel
+      return unless sel
       ->(doc : Document) { match_selector?(JSON.parse(doc.to_json), sel) }
     end
 
