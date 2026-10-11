@@ -7,6 +7,8 @@ tagged via `make tag`).
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-10-11
+
 - Upgraded to ameba 1.7.0 and standardized the CI pipeline (split lint/test
   jobs, pinned Crystal version, shards cache, kept the macOS and e2e jobs
   gated behind the lint job).

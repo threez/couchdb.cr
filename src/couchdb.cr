@@ -14,6 +14,6 @@ require "./couchdb/database"
 require "./couchdb/local_replica"
 
 module CouchDB
-  VERSION = "0.3.1"
+  VERSION = "0.3.2"
   Log     = ::Log.for("couchdb")
 end
